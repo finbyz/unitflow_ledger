@@ -43,7 +43,15 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+    "Item": "public/js/item.js",
+    "Sales Order": "public/js/sales_order.js",
+    "Purchase Receipt": "public/js/purchase_reciept.js",
+    "Delivery Note": "public/js/delivery_note.js",
+    "Sales Invoice": "public/js/sales_invoice.js",
+    "Purchase Invoice": "public/js/purchase_invoice.js",
+    "Stock Entry": "public/js/stock_entry.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -139,6 +147,32 @@ app_license = "mit"
 # 		"on_trash": "method"
 # 	}
 # }
+doc_events = {
+	# "Stock Ledger Entry": {
+	# 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
+	# },
+	 "Sales Invoice": {
+        "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
+        "on_submit": "unitflow_ledger.doc_events.Sales_invoice.create_secondary_sle",
+    },
+    "Purchase Invoice": {
+        "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
+        "on_submit": "unitflow_ledger.doc_events.purchase_invoice.create_secondary_sle",
+    },
+    "Delivery Note": {
+        "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
+        "on_submit": "unitflow_ledger.doc_events.delivery_note.create_secondary_sle",
+    },
+    "Purchase Receipt": {
+        "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
+        "on_submit": "unitflow_ledger.doc_events.purchase_reciept.create_secondary_sle",
+    },
+    "Stock Entry": {
+        "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
+        "on_submit": "unitflow_ledger.doc_events.stock_entry.create_secondary_sle",
+    },
+}
+
 
 # Scheduled Tasks
 # ---------------
