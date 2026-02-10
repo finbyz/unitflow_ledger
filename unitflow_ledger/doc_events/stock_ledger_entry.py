@@ -64,11 +64,13 @@ def create_secondary_uom_ledger_entry(sle_doc, method):
 
 def get_secondary_qty(sle_doc, conversion_factor):
 	"""
-	
+	Convert primary qty (meters) to secondary qty (coils)
+	Formula: secondary_qty = actual_qty / conversion_factor
+	Example: 76.23 meters / 76.23 = 1 coil
 	"""
 	if not sle_doc.actual_qty:
 		return None
-	return flt(sle_doc.actual_qty) * flt(conversion_factor)
+	return flt(sle_doc.actual_qty) / flt(conversion_factor)
 
 
 def adjust_secondary_qty_sign(sle_doc, qty):
@@ -79,6 +81,13 @@ def adjust_secondary_qty_sign(sle_doc, qty):
 	# Purchase transactions
 	if sle_doc.voucher_type == "Purchase Receipt":
 		is_return = frappe.db.get_value("Purchase Receipt", sle_doc.voucher_no, "is_return")
+		if is_return:
+			return -abs(qty)  # Return = Stock Out
+		return abs(qty)  # Receipt = Stock In
+
+	# Purchase Invoice transactions
+	if sle_doc.voucher_type == "Purchase Invoice":
+		is_return = frappe.db.get_value("Purchase Invoice", sle_doc.voucher_no, "is_return")
 		if is_return:
 			return -abs(qty)  # Return = Stock Out
 		return abs(qty)  # Receipt = Stock In

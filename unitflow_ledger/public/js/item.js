@@ -28,13 +28,5 @@ function calculate_uom_conversion(frm) {
             row.conversion_factor = 1;
         }
     });
-
-    let max_cf = Math.max(...frm.doc.uoms.map(row => row.conversion_factor));
-
-    frm.doc.uoms.forEach(row => {
-        row.reverse_conversion_factor = max_cf / row.conversion_factor;
-        
-    });
-
     frm.refresh_field('uoms');
 }
