@@ -2,6 +2,9 @@ import frappe
 
 
 def before_cancel(doc, method=None):
+	if not frappe.db.table_exists("Secondary UOM Ledger Entry"):
+		return
+
 	# Skip link checks during cancel; we will mark related SULE rows as cancelled here.
 	doc.flags.ignore_links = True
 	frappe.db.sql(
