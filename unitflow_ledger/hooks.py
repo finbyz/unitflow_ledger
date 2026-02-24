@@ -156,6 +156,12 @@ doc_events = {
 	# "Stock Ledger Entry": {
 	# 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
 	# },
+    "Work Order": {
+        "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
+    },
+    "BOM": {
+        "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
+    },
 	 "Sales Invoice": {
         "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
         "on_submit": "unitflow_ledger.doc_events.Sales_invoice.create_secondary_sle",
