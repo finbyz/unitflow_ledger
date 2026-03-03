@@ -20,6 +20,15 @@ def on_update(doc, method):
     )
 
 
+def before_save(doc, method):
+    secondary_uom_calc(
+        doc,
+        child_table_field="required_items",
+        qty_field="required_qty",
+        primary_uom_field="stock_uom"
+    )
+
+
 def secondary_uom_calc(doc, child_table_field, qty_field, primary_uom_field):
     if not hasattr(doc, child_table_field):
         return
@@ -35,6 +44,9 @@ def secondary_uom_calc(doc, child_table_field, qty_field, primary_uom_field):
         item_doc = frappe.get_cached_doc("Item", item.item_code)
 
         primary_uom = getattr(item, primary_uom_field, None) or item_doc.stock_uom
+
+        if hasattr(item, "required_uom"):
+            item.required_uom = primary_uom
 
         secondary_row = next(
             (u for u in item_doc.uoms if u.uom != primary_uom),

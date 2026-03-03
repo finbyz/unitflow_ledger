@@ -50,6 +50,7 @@ fixtures = [
 # include js in doctype views
 doctype_js = {
     "Item": "public/js/item.js",
+    "Work Order": "public/js/work_order.js",
     "Sales Order": "public/js/sales_order.js",
     "Purchase Receipt": "public/js/purchase_reciept.js",
     "Delivery Note": "public/js/delivery_note.js",
@@ -157,6 +158,7 @@ doc_events = {
 	# 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
 	# },
     "Work Order": {
+        "before_save": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
     },
     "BOM": {
@@ -294,4 +296,3 @@ doc_events = {
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
