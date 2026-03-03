@@ -63,7 +63,7 @@ async function set_secondary_fields_for_required_items(frm) {
 
 		const required_qty = flt(row.required_qty);
 		const conversion_factor = flt(secondary_row.conversion_factor);
-		const secondary_qty = conversion_factor ? required_qty * conversion_factor : 0;
+		const secondary_qty = conversion_factor ? required_qty / conversion_factor : 0;
 
 		frappe.model.set_value(row.doctype, row.name, "secondary_uom", secondary_row.uom);
 		frappe.model.set_value(row.doctype, row.name, "secondary_qty", secondary_qty);

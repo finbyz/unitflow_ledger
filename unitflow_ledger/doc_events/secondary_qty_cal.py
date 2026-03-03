@@ -64,4 +64,5 @@ def secondary_uom_calc(doc, child_table_field, qty_field, primary_uom_field):
 
         item.secondary_uom = secondary_row.uom
         item.secondary_conversion_factor = conversion_factor
-        item.secondary_qty = quantity * conversion_factor if conversion_factor else 0
+        # conversion_factor is in stock-uom terms, so secondary qty is qty / factor.
+        item.secondary_qty = quantity / conversion_factor if conversion_factor else 0

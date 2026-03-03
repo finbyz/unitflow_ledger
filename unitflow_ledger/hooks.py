@@ -158,6 +158,7 @@ doc_events = {
 	# 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
 	# },
     "Work Order": {
+        "validate": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "before_save": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
     },
