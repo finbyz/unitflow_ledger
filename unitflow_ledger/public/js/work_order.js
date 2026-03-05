@@ -1,71 +1,115 @@
+const wo_item_doc_cache = {};
+
 frappe.ui.form.on("Work Order", {
+	onload(frm) {
+		schedule_work_order_recalculation(frm, 0);
+	},
+
+	onload_post_render(frm) {
+		schedule_work_order_recalculation(frm, 100);
+	},
+
+	setup(frm) {
+		schedule_work_order_recalculation(frm, 0);
+	},
+
+	refresh(frm) {
+		schedule_work_order_recalculation(frm, 100);
+	},
+
+	required_items(frm) {
+		schedule_work_order_recalculation(frm, 50);
+	},
+
+	qty(frm) {
+		// Parent qty updates required_items.required_qty; recalc after those updates land.
+		schedule_work_order_recalculation(frm, 250);
+	},
+
 	before_save(frm) {
-		return set_secondary_fields_for_required_items(frm);
+		return recalculate_work_order_rows(frm);
 	},
 });
 
-async function set_secondary_fields_for_required_items(frm) {
+frappe.ui.form.on("Work Order Item", {
+	item_code(frm, cdt, cdn) {
+		return update_work_order_secondary_fields(cdt, cdn);
+	},
+
+	required_qty(frm, cdt, cdn) {
+		return update_work_order_secondary_fields(cdt, cdn);
+	},
+
+	stock_uom(frm, cdt, cdn) {
+		return update_work_order_secondary_fields(cdt, cdn);
+	},
+
+	required_items_add(frm) {
+		schedule_work_order_recalculation(frm, 50);
+	},
+});
+
+function schedule_work_order_recalculation(frm, delay = 0) {
+	clearTimeout(frm.__wo_secondary_recalc_timer);
+	frm.__wo_secondary_recalc_timer = setTimeout(() => {
+		recalculate_work_order_rows(frm);
+	}, delay);
+}
+
+async function recalculate_work_order_rows(frm) {
 	if (!frm.doc.required_items || !frm.doc.required_items.length) {
 		return;
 	}
 
-	const item_codes = [...new Set(
-		(frm.doc.required_items || [])
-			.map((row) => row.item_code)
-			.filter(Boolean)
-	)];
+	for (const row of frm.doc.required_items) {
+		await update_work_order_secondary_fields(row.doctype, row.name);
+	}
+}
 
-	if (!item_codes.length) {
+async function update_work_order_secondary_fields(cdt, cdn) {
+	const row = locals[cdt] && locals[cdt][cdn];
+	if (!row) {
 		return;
 	}
 
-	const response = await frappe.call({
-		method: "frappe.client.get_list",
-		args: {
-			doctype: "Item",
-			filters: {
-				name: ["in", item_codes],
-			},
-			fields: ["name", "stock_uom"],
-			limit_page_length: item_codes.length,
-		},
-	});
-
-	const items = response.message || [];
-	const stock_uom_by_item = {};
-	const item_doc_cache = {};
-	for (const item of items) {
-		stock_uom_by_item[item.name] = item.stock_uom;
+	if (!row.item_code) {
+		await frappe.model.set_value(cdt, cdn, "required_uom", null);
+		await frappe.model.set_value(cdt, cdn, "secondary_uom", null);
+		await frappe.model.set_value(cdt, cdn, "secondary_qty", 0);
+		return;
 	}
 
-	for (const row of frm.doc.required_items) {
-		if (!row.item_code) {
-			frappe.model.set_value(row.doctype, row.name, "required_uom", null);
-			frappe.model.set_value(row.doctype, row.name, "secondary_uom", null);
-			frappe.model.set_value(row.doctype, row.name, "secondary_qty", 0);
-			continue;
-		}
-
-		if (!item_doc_cache[row.item_code]) {
-			item_doc_cache[row.item_code] = await frappe.db.get_doc("Item", row.item_code);
-		}
-		const item_doc = item_doc_cache[row.item_code];
-		const primary_uom = row.stock_uom || stock_uom_by_item[row.item_code] || item_doc.stock_uom;
-
-		frappe.model.set_value(row.doctype, row.name, "required_uom", primary_uom);
-
-		const secondary_row = (item_doc.uoms || []).find((u) => u.uom !== primary_uom);
-		if (!secondary_row) {
-			frappe.model.set_value(row.doctype, row.name, "secondary_uom", null);
-			frappe.model.set_value(row.doctype, row.name, "secondary_qty", 0);
-			continue;
-		}
-
-		const required_qty = flt(row.required_qty);
-		const conversion_factor = flt(secondary_row.conversion_factor);
-		const secondary_qty = conversion_factor ? required_qty / conversion_factor : 0;
-
-		frappe.model.set_value(row.doctype, row.name, "secondary_uom", secondary_row.uom);
-		frappe.model.set_value(row.doctype, row.name, "secondary_qty", secondary_qty);
+	const item_doc = await get_work_order_item_doc(row.item_code);
+	if (!item_doc) {
+		return;
 	}
+
+	const primary_uom = row.stock_uom || item_doc.stock_uom;
+	await frappe.model.set_value(cdt, cdn, "required_uom", primary_uom);
+
+	const secondary_row = (item_doc.uoms || []).find((u) => u.uom !== primary_uom);
+	if (!secondary_row) {
+		await frappe.model.set_value(cdt, cdn, "secondary_uom", null);
+		await frappe.model.set_value(cdt, cdn, "secondary_qty", 0);
+		return;
+	}
+
+	const required_qty = flt(row.required_qty);
+	const conversion_factor = flt(secondary_row.conversion_factor);
+	const secondary_qty = conversion_factor ? required_qty / conversion_factor : 0;
+
+	await frappe.model.set_value(cdt, cdn, "secondary_uom", secondary_row.uom);
+	await frappe.model.set_value(cdt, cdn, "secondary_qty", secondary_qty);
+}
+
+async function get_work_order_item_doc(item_code) {
+	if (!item_code) {
+		return null;
+	}
+
+	if (!wo_item_doc_cache[item_code]) {
+		wo_item_doc_cache[item_code] = frappe.db.get_doc("Item", item_code);
+	}
+
+	return wo_item_doc_cache[item_code];
 }

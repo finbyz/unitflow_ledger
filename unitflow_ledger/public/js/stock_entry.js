@@ -1,152 +1,156 @@
 let updating = false;
+const ITEM_DOC_CACHE = {};
+
+const HAS_SECONDARY_FACTOR_FIELD = frappe.meta.has_field(
+    "Stock Entry Detail",
+    "secondary_conversion_factor"
+);
 
 frappe.ui.form.on("Stock Entry Detail", {
-
     item_code(frm, cdt, cdn) {
-        set_secondary_fields_se(frm, cdt, cdn);
+        set_secondary_fields_se(cdt, cdn);
     },
 
     qty(frm, cdt, cdn) {
-        update_from_primary_se(frm, cdt, cdn);
+        update_from_primary_se(cdt, cdn);
+    },
+
+    transfer_qty(frm, cdt, cdn) {
+        update_from_primary_se(cdt, cdn);
     },
 
     secondary_uom(frm, cdt, cdn) {
-        update_from_primary_se(frm, cdt, cdn);
+        set_secondary_factor_from_uom(cdt, cdn);
     },
 
     secondary_qty(frm, cdt, cdn) {
-        update_from_secondary_se(frm, cdt, cdn);
+        update_from_secondary_se(cdt, cdn);
     },
 
     secondary_conversion_factor(frm, cdt, cdn) {
-        if (updating) return;
-        update_on_factor_change_se(frm, cdt, cdn);
+        if (!HAS_SECONDARY_FACTOR_FIELD || updating) return;
+        update_on_factor_change_se(cdt, cdn);
     }
 });
 
 
-function set_secondary_fields_se(frm, cdt, cdn) {
-    let row = locals[cdt][cdn];
-    if (!row.item_code) return;
+function queue_secondary_recalc(frm) {
+    clearTimeout(frm.__se_secondary_recalc_timer);
+    frm.__se_secondary_recalc_timer = setTimeout(() => {
+        recalculate_secondary_for_all_items(frm);
+    }, 500);
+}
 
-    frappe.call({
-        method: "frappe.client.get",
-        args: {
-            doctype: "Item",
-            name: row.item_code
-        },
-        callback(r) {
-            if (!r.message) return;
+function get_effective_factor(row) {
+    if (!row) return 0;
+    return flt(row.secondary_conversion_factor || row.__secondary_conversion_factor);
+}
 
-            let item = r.message;
+async function fetch_item_doc(item_code) {
+    if (!item_code) return null;
+    if (!ITEM_DOC_CACHE[item_code]) {
+        ITEM_DOC_CACHE[item_code] = frappe.db.get_doc("Item", item_code);
+    }
+    return ITEM_DOC_CACHE[item_code];
+}
 
-            // pick first non-stock UOM
-            let sec = item.uoms.find(u => u.uom !== item.stock_uom);
-            if (!sec) return;
+async function set_secondary_fields_se(cdt, cdn) {
+    const row = locals[cdt][cdn];
+    if (!row?.item_code || updating) return;
 
-            updating = true;
+    const item = await fetch_item_doc(row.item_code);
+    if (!item) return;
 
-            // set secondary_uom and conversion factor
-            frappe.model.set_value(cdt, cdn, "secondary_uom", sec.uom);
-            frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", sec.conversion_factor);
+    const chosen_uom = row.secondary_uom || null;
+    let secondary_row = (item.uoms || []).find((u) => u.uom === chosen_uom);
+    if (!secondary_row) {
+        secondary_row = (item.uoms || []).find((u) => u.uom !== item.stock_uom);
+    }
+    if (!secondary_row) return;
 
-            // qty fallback: if 0/undefined/null, ERPNext default is 1
-            let qty = (row.qty === null || row.qty === undefined || row.qty === 0) ? 1 : row.qty;
+    const factor = flt(secondary_row.conversion_factor);
+    if (!factor) return;
 
-            // Calculate secondary_qty
-            // Formula: secondary_qty = qty / conversion_factor
-            // Example: 76.23 meters / 76.23 = 1 coil
-            frappe.model.set_value(cdt, cdn, "secondary_qty", qty / sec.conversion_factor);
-
-            updating = false;
+    updating = true;
+    try {
+        await frappe.model.set_value(cdt, cdn, "secondary_uom", secondary_row.uom);
+        row.__secondary_conversion_factor = factor;
+        if (HAS_SECONDARY_FACTOR_FIELD) {
+            await frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", factor);
         }
-    });
+
+        const qty = row.qty == null ? 0 : flt(row.qty);
+        await frappe.model.set_value(cdt, cdn, "secondary_qty", qty / factor);
+    } finally {
+        updating = false;
+    }
 }
 
+async function set_secondary_factor_from_uom(cdt, cdn) {
+    const row = locals[cdt][cdn];
+    if (!row?.item_code || updating || !row.secondary_uom) return;
 
-function update_from_primary_se(frm, cdt, cdn) {
-    if (updating) return;
+    const item = await fetch_item_doc(row.item_code);
+    if (!item) return;
+
+    const secondary_row = (item.uoms || []).find((u) => u.uom === row.secondary_uom);
+    if (!secondary_row?.conversion_factor) return;
+
     updating = true;
-
-    let row = locals[cdt][cdn];
-
-    if (!row.item_code || row.qty === null || row.qty === undefined) {
+    try {
+        const factor = flt(secondary_row.conversion_factor);
+        row.__secondary_conversion_factor = factor;
+        if (HAS_SECONDARY_FACTOR_FIELD) {
+            await frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", factor);
+        }
+        await frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty || 0) / factor);
+    } finally {
         updating = false;
-        return;
     }
+}
 
-    if (!row.secondary_conversion_factor) {
-        updating = false;
-        return;
-    }
+function update_from_primary_se(cdt, cdn) {
+    if (updating) return;
+    const row = locals[cdt][cdn];
+    const factor = get_effective_factor(row);
+    if (!row?.item_code || row.qty == null || !factor) return;
 
-    // Formula: secondary_qty = qty / conversion_factor
-    // Example: 152.46 meters / 76.23 = 2 coils
-    frappe.model.set_value(
-        cdt,
-        cdn,
-        "secondary_qty",
-        row.qty / row.secondary_conversion_factor
-    );
-
+    updating = true;
+    frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty) / factor);
     updating = false;
 }
 
-
-function update_from_secondary_se(frm, cdt, cdn) {
+function update_from_secondary_se(cdt, cdn) {
     if (updating) return;
+    const row = locals[cdt][cdn];
+    const factor = get_effective_factor(row);
+    if (!row?.item_code || row.secondary_qty == null || !factor) return;
+
     updating = true;
-
-    let row = locals[cdt][cdn];
-
-    if (!row.item_code || row.secondary_qty === null || row.secondary_qty === undefined) {
-        updating = false;
-        return;
-    }
-
-    if (!row.secondary_conversion_factor) {
-        updating = false;
-        return;
-    }
-
-    // Formula: qty = secondary_qty * conversion_factor
-    // Example: 2 coils * 76.23 = 152.46 meters
-    frappe.model.set_value(
-        cdt,
-        cdn,
-        "qty",
-        row.secondary_qty * row.secondary_conversion_factor
-    );
-
+    frappe.model.set_value(cdt, cdn, "qty", flt(row.secondary_qty) * factor);
     updating = false;
 }
 
-
-function update_on_factor_change_se(frm, cdt, cdn) {
+function update_on_factor_change_se(cdt, cdn) {
     if (updating) return;
+    const row = locals[cdt][cdn];
+    const factor = get_effective_factor(row);
+    if (!factor) return;
+
     updating = true;
+    row.__secondary_conversion_factor = factor;
 
-    let r = locals[cdt][cdn];
-    let factor = r.secondary_conversion_factor;
-
-    if (!factor) {
-        updating = false;
-        return;
+    if (row.qty != null) {
+        frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty) / factor);
+    } else if (row.secondary_qty != null) {
+        frappe.model.set_value(cdt, cdn, "qty", flt(row.secondary_qty) * factor);
     }
-
-    if (r.qty != null) {
-        frappe.model.set_value(
-            cdt, cdn,
-            "secondary_qty",
-            r.qty / factor
-        );
-    } else if (r.secondary_qty != null) {
-        frappe.model.set_value(
-            cdt, cdn,
-            "qty",
-            r.secondary_qty * factor
-        );
-    }
-
     updating = false;
+}
+
+async function recalculate_secondary_for_all_items(frm) {
+    for (const row of frm.doc.items || []) {
+        if (!row.item_code) continue;
+        await set_secondary_fields_se(row.doctype, row.name);
+    }
 }
