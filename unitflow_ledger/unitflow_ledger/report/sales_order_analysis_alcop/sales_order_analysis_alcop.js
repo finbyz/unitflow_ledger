@@ -1,6 +1,9 @@
 // Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 // For license information, please see license.txt
 
+let last_sales_order_for_color = null;
+let sales_order_color_band = 0;
+
 frappe.query_reports["Sales Order Analysis Alcop"] = {
 filters: [
 		{
@@ -102,6 +105,27 @@ filters: [
 
 		if (column.fieldname == "delay" && data && data[column.fieldname] > 0) {
 			value = "<span style='color:red;'>" + value + "</span>";
+		}
+
+		if (data) {
+			if (row === 0 && column.fieldname === "date") {
+				last_sales_order_for_color = null;
+				sales_order_color_band = 0;
+			}
+
+			if (data.__sales_order_color_band === undefined) {
+				const current_sales_order = data.sales_order || "";
+				if (current_sales_order !== last_sales_order_for_color) {
+					if (last_sales_order_for_color !== null) {
+						sales_order_color_band = sales_order_color_band ? 0 : 1;
+					}
+					last_sales_order_for_color = current_sales_order;
+				}
+				data.__sales_order_color_band = sales_order_color_band;
+			}
+
+			const bg_color = data.__sales_order_color_band ? "#aae3ec" : "#fffaf0";
+			value = `<span style="display:block;background-color:${bg_color};margin:-8px -10px;padding:8px 10px;">${value}</span>`;
 		}
 		return value;
 	},

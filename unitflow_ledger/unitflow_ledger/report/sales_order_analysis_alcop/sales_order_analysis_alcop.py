@@ -69,8 +69,10 @@ def get_data(conditions, filters):
 			so.status, so.customer, soi.item_code,
 			DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
 			IF(so.status in ('Completed','To Bill'), 0, (SELECT delay_days)) as delay,
+			soi.uom,
 			soi.qty, soi.delivered_qty,
 			IFNULL(soi.secondary_qty, 0) as sec_qty,
+			soi.secondary_uom as sec_uom,
 			IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
 			(soi.qty - soi.delivered_qty) AS pending_qty,
 			IFNULL(SUM(sii.qty), 0) as billed_qty,
@@ -276,18 +278,32 @@ def get_columns(filters):
 	columns.extend(
 		[
 			{
+				"label": _("UOM"),
+				"fieldname": "uom",
+				"fieldtype": "Link",
+				"options": "UOM",
+				"width": 120,
+			},
+			{
 				"label": _("Qty"),
 				"fieldname": "qty",
 				"fieldtype": "Float",
 				"width": 120,
 				"convertible": "qty",
 			},
-	{
+			{
 				"label": _("Sec Qty"),
 				"fieldname": "sec_qty",
 				"fieldtype": "Float",
 				"width": 120,
 				"convertible": "qty",
+			},
+			{
+				"label": _("Sec UOM"),
+				"fieldname": "sec_uom",
+				"fieldtype": "Link",
+				"options": "UOM",
+				"width": 120,
 			},
 			{
 				"label": _("Delivered Qty"),
