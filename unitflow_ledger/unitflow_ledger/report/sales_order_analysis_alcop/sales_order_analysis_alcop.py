@@ -67,6 +67,19 @@ def get_data(conditions, filters):
 			soi.delivery_date as delivery_date,
 			so.name as sales_order,
 			so.status, so.customer, soi.item_code,
+			(
+				SELECT st.name
+				FROM `tabSales Team` st
+				WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+				ORDER BY st.idx
+				LIMIT 1
+			) as sales_team,
+			(
+				SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
+				FROM `tabSales Team` st
+				WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+			) as sales_person,
+
 			DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
 			IF(so.status in ('Completed','To Bill'), 0, (SELECT delay_days)) as delay,
 			soi.uom,
@@ -277,6 +290,20 @@ def get_columns(filters):
 
 	columns.extend(
 		[
+			# {
+			# 	"label": _("Sales Team"),
+			# 	"fieldname": "sales_team",
+			# 	"fieldtype": "Link",
+			# 	"options": "Sales Team",
+			# 	"width": 150,
+			# },
+			{
+				"label": _("Sales Person"),
+				"fieldname": "sales_person",
+				"fieldtype": "Data",
+				"width": 180,
+			},
+
 			{
 				"label": _("UOM"),
 				"fieldname": "uom",
