@@ -52,6 +52,7 @@ doctype_js = {
     "Item": "public/js/item.js",
     "BOM": "public/js/bom.js",
     "Work Order": "public/js/work_order.js",
+    "Quotation": "public/js/quotation.js",
     "Sales Order": "public/js/sales_order.js",
     "Purchase Receipt": "public/js/purchase_reciept.js",
     "Delivery Note": "public/js/delivery_note.js",
@@ -155,9 +156,9 @@ doctype_js = {
 # 	}
 # }
 doc_events = {
-	# "Stock Ledger Entry": {
-	# 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
-	# },
+    # "Stock Ledger Entry": {
+    # 	"after_insert": "unitflow_ledger.doc_events.stock_ledger_entry.create_secondary_uom_ledger_entry"
+    # },
     "Work Order": {
         "validate": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "before_save": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
@@ -166,7 +167,7 @@ doc_events = {
     "BOM": {
         "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
     },
-	 "Sales Invoice": {
+    "Sales Invoice": {
         "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
         "on_submit": "unitflow_ledger.doc_events.Sales_invoice.create_secondary_sle",
     },
