@@ -164,6 +164,11 @@ doc_events = {
         "before_save": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
     },
+    "Sales Order": {
+        "validate": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
+        "before_save": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
+        "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
+    },
     "BOM": {
         "on_update": "unitflow_ledger.doc_events.secondary_qty_cal.on_update",
     },

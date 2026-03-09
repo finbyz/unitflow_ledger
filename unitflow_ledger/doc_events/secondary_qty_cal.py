@@ -3,20 +3,17 @@ import frappe
 
 
 def on_update(doc, method):
-    # For first case (e.g. Production Plan / custom DocType)
+    # For child table "required_items" (e.g. Production Plan)
     secondary_uom_calc(
         doc,
         child_table_field="required_items",
         qty_field="required_qty",
-        primary_uom_field="stock_uom"
+        primary_uom_field="stock_uom",
     )
 
-    # For BOM
+    # For child table "items" (BOM, Sales Order, etc.)
     secondary_uom_calc(
-        doc,
-        child_table_field="items",
-        qty_field="qty",
-        primary_uom_field="uom"
+        doc, child_table_field="items", qty_field="qty", primary_uom_field="uom"
     )
 
 
@@ -25,7 +22,10 @@ def before_save(doc, method):
         doc,
         child_table_field="required_items",
         qty_field="required_qty",
-        primary_uom_field="stock_uom"
+        primary_uom_field="stock_uom",
+    )
+    secondary_uom_calc(
+        doc, child_table_field="items", qty_field="qty", primary_uom_field="uom"
     )
 
 
@@ -48,10 +48,7 @@ def secondary_uom_calc(doc, child_table_field, qty_field, primary_uom_field):
         if hasattr(item, "required_uom"):
             item.required_uom = primary_uom
 
-        secondary_row = next(
-            (u for u in item_doc.uoms if u.uom != primary_uom),
-            None
-        )
+        secondary_row = next((u for u in item_doc.uoms if u.uom != primary_uom), None)
 
         if not secondary_row:
             item.secondary_uom = None
