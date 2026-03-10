@@ -191,6 +191,8 @@ doc_events = {
     "Stock Entry": {
         "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
         "on_submit": "unitflow_ledger.doc_events.stock_entry.create_secondary_sle",
+        "validate": "unitflow_ledger.doc_events.stock_entry.populate_secondary",
+        
     },
 }
 
