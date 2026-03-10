@@ -121,23 +121,23 @@
 const wo_item_doc_cache = {};
 
 frappe.ui.form.on("Work Order", {
-	onload(frm) {
-		schedule_work_order_recalculation(frm, 500);
-	},
+	// onload(frm) {
+	// 	schedule_work_order_recalculation(frm, 500);
+	// },
 
-	onload_post_render(frm) {
-		schedule_work_order_recalculation(frm, 500);
-	},
+	// onload_post_render(frm) {
+	// 	schedule_work_order_recalculation(frm, 500);
+	// },
 
-	setup(frm) {
-		schedule_work_order_recalculation(frm, 500);
-	},
+	// setup(frm) {
+	// 	schedule_work_order_recalculation(frm, 500);
+	// },
 
-	refresh(frm) {
-		setTimeout(() => {
-			recalculate_work_order_rows(frm);
-		}, 500);
-	},
+	// refresh(frm) {
+	// 	setTimeout(() => {
+	// 		recalculate_work_order_rows(frm);
+	// 	}, 500);
+	// },
 
 	qty(frm) {
 		schedule_work_order_recalculation(frm, 300);
