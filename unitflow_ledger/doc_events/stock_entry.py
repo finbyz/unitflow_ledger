@@ -2,8 +2,9 @@
 import frappe
 from frappe.utils import nowtime, flt
 
+
 def create_secondary_sle(doc, method):
-   #  Run only for Material Receipt
+    #  Run only for Material Receipt
     if doc.doctype != "Stock Entry" or doc.stock_entry_type != "Material Receipt":
         return
 
@@ -30,7 +31,8 @@ def create_secondary_sle(doc, method):
         sle.insert(ignore_permissions=True)
         sle.submit()
 
-def calc_secondary_from_item(item):
+
+def calc_secondary_from_item(item, is_opening=False):
 
     if not item.item_code:
         return
@@ -46,14 +48,18 @@ def calc_secondary_from_item(item):
 
     conversion_factor = flt(secondary_row.conversion_factor)
 
+    # Always set the UOM and factor
     item.secondary_uom = secondary_row.uom
     item.secondary_conversion_factor = conversion_factor
 
-    if conversion_factor:
+    # Skip qty calculation for opening entries — qty is entered manually
+    if not is_opening and conversion_factor:
         item.secondary_qty = flt(item.qty) / conversion_factor
 
 
 def populate_secondary(doc, method):
+
+    is_opening = doc.is_opening == "Yes"
 
     wo_map = {}
 
@@ -62,7 +68,7 @@ def populate_secondary(doc, method):
         wo_items = frappe.get_all(
             "Work Order Item",
             filters={"parent": doc.work_order},
-            fields=["item_code", "secondary_uom", "secondary_qty", "required_qty"]
+            fields=["item_code", "secondary_uom", "secondary_qty", "required_qty"],
         )
 
         wo_map = {d.item_code: d for d in wo_items}
@@ -73,13 +79,16 @@ def populate_secondary(doc, method):
 
         if wo_item and wo_item.secondary_uom:
 
+            # Always set the UOM
             item.secondary_uom = wo_item.secondary_uom
 
-            if flt(wo_item.required_qty):
-                ratio = flt(item.qty) / flt(wo_item.required_qty)
-                item.secondary_qty = flt(wo_item.secondary_qty) * ratio
-            else:
-                item.secondary_qty = wo_item.secondary_qty
+            # Skip qty calculation for opening entries
+            if not is_opening:
+                if flt(wo_item.required_qty):
+                    ratio = flt(item.qty) / flt(wo_item.required_qty)
+                    item.secondary_qty = flt(wo_item.secondary_qty) * ratio
+                else:
+                    item.secondary_qty = wo_item.secondary_qty
 
         else:
-            calc_secondary_from_item(item)
+            calc_secondary_from_item(item, is_opening=is_opening)

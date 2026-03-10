@@ -168,28 +168,28 @@ const HAS_SECONDARY_FACTOR_FIELD = frappe.meta.has_field(
 frappe.ui.form.on("Stock Entry Detail", {
 
     item_code(frm, cdt, cdn) {
-        set_secondary_fields_se(cdt, cdn);
+        set_secondary_fields_se(frm, cdt, cdn);
     },
 
     qty(frm, cdt, cdn) {
-        update_from_primary_se(cdt, cdn);
+        update_from_primary_se(frm, cdt, cdn);
     },
 
     transfer_qty(frm, cdt, cdn) {
-        update_from_primary_se(cdt, cdn);
+        update_from_primary_se(frm, cdt, cdn);
     },
 
     secondary_uom(frm, cdt, cdn) {
-        set_secondary_factor_from_uom(cdt, cdn);
+        set_secondary_factor_from_uom(frm, cdt, cdn);
     },
 
     secondary_qty(frm, cdt, cdn) {
-        update_from_secondary_se(cdt, cdn);
+        update_from_secondary_se(frm, cdt, cdn);
     },
 
     secondary_conversion_factor(frm, cdt, cdn) {
         if (!HAS_SECONDARY_FACTOR_FIELD || updating) return;
-        update_on_factor_change_se(cdt, cdn);
+        update_on_factor_change_se(frm, cdt, cdn);
     }
 });
 
@@ -202,7 +202,7 @@ frappe.ui.form.on("Stock Entry", {
     },
 
     items_add(frm, cdt, cdn) {
-        set_secondary_fields_se(cdt, cdn);
+        set_secondary_fields_se(frm, cdt, cdn);
     }
 
 });
@@ -249,7 +249,7 @@ async function fetch_item_doc(item_code) {
 // CORE LOGIC
 // ----------------------------------------------------
 
-async function set_secondary_fields_se(cdt, cdn) {
+async function set_secondary_fields_se(frm, cdt, cdn) {
 
     const row = locals[cdt][cdn];
 
@@ -273,6 +273,8 @@ async function set_secondary_fields_se(cdt, cdn) {
 
     if (!factor) return;
 
+    const is_opening = frm?.doc?.is_opening === "Yes";
+
     updating = true;
 
     try {
@@ -285,9 +287,11 @@ async function set_secondary_fields_se(cdt, cdn) {
             await frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", factor);
         }
 
-        const qty = flt(row.qty || 0);
-
-        await frappe.model.set_value(cdt, cdn, "secondary_qty", qty / factor);
+        // Skip qty calculation for opening entries — qty is entered manually
+        if (!is_opening) {
+            const qty = flt(row.qty || 0);
+            await frappe.model.set_value(cdt, cdn, "secondary_qty", qty / factor);
+        }
 
     }
 
@@ -298,7 +302,7 @@ async function set_secondary_fields_se(cdt, cdn) {
 }
 
 
-async function set_secondary_factor_from_uom(cdt, cdn) {
+async function set_secondary_factor_from_uom(frm, cdt, cdn) {
 
     const row = locals[cdt][cdn];
 
@@ -312,6 +316,8 @@ async function set_secondary_factor_from_uom(cdt, cdn) {
 
     if (!secondary_row?.conversion_factor) return;
 
+    const is_opening = frm?.doc?.is_opening === "Yes";
+
     updating = true;
 
     try {
@@ -324,7 +330,10 @@ async function set_secondary_factor_from_uom(cdt, cdn) {
             await frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", factor);
         }
 
-        await frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty || 0) / factor);
+        // Skip qty calculation for opening entries — qty is entered manually
+        if (!is_opening) {
+            await frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty || 0) / factor);
+        }
 
     }
 
@@ -335,9 +344,12 @@ async function set_secondary_factor_from_uom(cdt, cdn) {
 }
 
 
-function update_from_primary_se(cdt, cdn) {
+function update_from_primary_se(frm, cdt, cdn) {
 
     if (updating) return;
+
+    // Skip recalculation for opening entries
+    if (frm?.doc?.is_opening === "Yes") return;
 
     const row = locals[cdt][cdn];
 
@@ -354,9 +366,12 @@ function update_from_primary_se(cdt, cdn) {
 }
 
 
-function update_from_secondary_se(cdt, cdn) {
+function update_from_secondary_se(frm, cdt, cdn) {
 
     if (updating) return;
+
+    // Skip recalculation for opening entries
+    if (frm?.doc?.is_opening === "Yes") return;
 
     const row = locals[cdt][cdn];
 
@@ -373,7 +388,7 @@ function update_from_secondary_se(cdt, cdn) {
 }
 
 
-function update_on_factor_change_se(cdt, cdn) {
+function update_on_factor_change_se(frm, cdt, cdn) {
 
     if (updating) return;
 
@@ -387,12 +402,17 @@ function update_on_factor_change_se(cdt, cdn) {
 
     row.__secondary_conversion_factor = factor;
 
-    if (row.qty != null) {
-        frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty) / factor);
-    }
+    // Skip qty calculation for opening entries
+    if (frm?.doc?.is_opening !== "Yes") {
 
-    else if (row.secondary_qty != null) {
-        frappe.model.set_value(cdt, cdn, "qty", flt(row.secondary_qty) * factor);
+        if (row.qty != null) {
+            frappe.model.set_value(cdt, cdn, "secondary_qty", flt(row.qty) / factor);
+        }
+
+        else if (row.secondary_qty != null) {
+            frappe.model.set_value(cdt, cdn, "qty", flt(row.secondary_qty) * factor);
+        }
+
     }
 
     updating = false;
@@ -410,7 +430,7 @@ async function recalculate_secondary_for_all_items(frm) {
 
         if (!row.item_code) continue;
 
-        await set_secondary_fields_se(row.doctype, row.name);
+        await set_secondary_fields_se(frm, row.doctype, row.name);
 
     }
 
