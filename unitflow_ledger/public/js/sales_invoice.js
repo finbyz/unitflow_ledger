@@ -46,16 +46,10 @@ function set_secondary_fields_si(frm, cdt, cdn) {
 
             updating = true;
 
-            // set secondary_uom and conversion factor
             frappe.model.set_value(cdt, cdn, "secondary_uom", sec.uom);
             frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", sec.conversion_factor);
 
-            // qty fallback: if 0/undefined/null, ERPNext default is 1
             let qty = (row.qty === null || row.qty === undefined || row.qty === 0) ? 1 : row.qty;
-
-            // Calculate secondary_qty
-            // Formula: secondary_qty = qty / conversion_factor
-            // Example: 76.23 meters / 76.23 = 1 coil
             frappe.model.set_value(cdt, cdn, "secondary_qty", qty / sec.conversion_factor);
 
             updating = false;
