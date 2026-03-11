@@ -33,30 +33,43 @@ def create_secondary_sle(doc, method):
 
 
 def calc_secondary_from_item(item, is_opening=False):
+ 
+    # Stop if no item
 
     if not item.item_code:
-        return
-    if frappe.utils.cint(item.get("manual_secondary_qty")):
-        return
 
+        return
+ 
+    # 🚫 STOP calculation if checkbox is checked
+
+    if item.manual_secondary_qty:
+
+        return
+ 
     item_doc = frappe.get_cached_doc("Item", item.item_code)
-
+ 
     primary_uom = item.stock_uom or item_doc.stock_uom
-
+ 
     secondary_row = next((u for u in item_doc.uoms if u.uom != primary_uom), None)
-
+ 
     if not secondary_row:
+
         return
-
+ 
     conversion_factor = flt(secondary_row.conversion_factor)
+ 
+    # Always set UOM and factor
 
-    # Always set the UOM and factor
     item.secondary_uom = secondary_row.uom
-    item.secondary_conversion_factor = conversion_factor
 
+    item.secondary_conversion_factor = conversion_factor
+ 
     # Skip qty calculation for opening entries — qty is entered manually
+
     if not is_opening and conversion_factor:
+
         item.secondary_qty = flt(item.qty) / conversion_factor
+ 
 
 
 def populate_secondary(doc, method):
