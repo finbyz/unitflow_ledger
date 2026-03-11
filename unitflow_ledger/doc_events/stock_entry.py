@@ -36,6 +36,8 @@ def calc_secondary_from_item(item, is_opening=False):
 
     if not item.item_code:
         return
+    if frappe.utils.cint(item.get("manual_secondary_qty")):
+        return
 
     item_doc = frappe.get_cached_doc("Item", item.item_code)
 
@@ -74,6 +76,8 @@ def populate_secondary(doc, method):
         wo_map = {d.item_code: d for d in wo_items}
 
     for item in doc.items:
+        if frappe.utils.cint(item.get("manual_secondary_qty")):
+            continue
 
         wo_item = wo_map.get(item.item_code)
 
