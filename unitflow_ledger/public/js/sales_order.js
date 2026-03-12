@@ -181,7 +181,8 @@ function patch_update_child_items_for_so(frm) {
             delivery_date: d.delivery_date,
             conversion_factor: d.conversion_factor,
             qty: d.qty,
-            rate: d.rate,
+            price_list_rate: d.price_list_rate,        // ← changed from rate
+            discount_percentage: d.discount_percentage,
             uom: d.uom,
             secondary_uom: d.secondary_uom || "",
             secondary_qty: d.secondary_qty || 0,
@@ -239,7 +240,8 @@ function patch_update_child_items_for_so(frm) {
                                         uom: d.uom,
                                         conversion_factor: d.conversion_factor,
                                         qty: me.doc.qty || 1,
-                                        rate: d.price_list_rate || 0,
+                                        price_list_rate: d.price_list_rate || 0,        // ← was rate
+                                        discount_percentage: d.discount_percentage || 0,
                                         description: d.description,
                                     });
 
@@ -342,13 +344,18 @@ function patch_update_child_items_for_so(frm) {
             },
             {
                 fieldtype: "Currency",
-                fieldname: "rate",
+                fieldname:  "price_list_rate",
                 options: "currency",
-                default: 0,
-                read_only: 0,
                 in_list_view: 1,
-                label: __("Rate"),
-                precision: get_precision("rate"),
+                label: __("Price List Rate"),
+                precision: get_precision("price_list_rate"),
+            },
+            {
+                fieldtype: "Percent",
+                fieldname: "discount_percentage",
+                in_list_view: 1,
+                label: __("Discount %"),
+                precision: get_precision("discount_percentage"),
             },
             {
                 fieldtype: "Link",
@@ -383,10 +390,20 @@ function patch_update_child_items_for_so(frm) {
                 fieldtype: "Float",
                 fieldname: "secondary_qty",
                 default: 0,
-                read_only: 1,
+                read_only: 0,
                 in_list_view: 1,
                 label: __("Sec Qty"),
                 precision: get_precision("secondary_qty"),
+                onchange: function () {
+                const me = this;
+                const row = dialog.fields_dict.trans_items.df.data.find(
+                    (r) => r.name === me.doc.name
+                );
+                if (row && flt(row.secondary_conversion_factor)) {
+                    row.qty = flt(me.value) * flt(row.secondary_conversion_factor);
+                    dialog.fields_dict.trans_items.grid.refresh();
+                    }
+                },
             },
             {
                 fieldtype: "Float",
@@ -435,9 +452,13 @@ function patch_update_child_items_for_so(frm) {
                 }
             },
             update_items: function () {
-                const trans_items = this.get_values()["trans_items"].filter(
-                    (item) => !!item.item_code
-                );
+                const trans_items = this.get_values()["trans_items"]
+                    .filter(item => !!item.item_code);
+                trans_items.forEach(row => {
+                    row.rate = flt(row.price_list_rate || 0);
+                    
+                });
+
                 frappe.call({
                     method: "erpnext.controllers.accounts_controller.update_child_qty_rate",
                     freeze: true,
