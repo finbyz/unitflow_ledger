@@ -12,20 +12,24 @@ from frappe import _
 from frappe.query_builder.functions import CombineDatetime, Sum
 from frappe.utils import cint, flt, get_datetime
 
-from erpnext.stock.doctype.inventory_dimension.inventory_dimension import get_inventory_dimensions
+from erpnext.stock.doctype.inventory_dimension.inventory_dimension import (
+    get_inventory_dimensions,
+)
 from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
-from erpnext.stock.doctype.stock_reconciliation.stock_reconciliation import get_stock_balance_for
+from erpnext.stock.doctype.stock_reconciliation.stock_reconciliation import (
+    get_stock_balance_for,
+)
 from erpnext.stock.doctype.warehouse.warehouse import apply_warehouse_filter
 from erpnext.stock.utils import (
-	is_reposting_item_valuation_in_progress,
-	update_included_uom_in_report,
+    is_reposting_item_valuation_in_progress,
+    update_included_uom_in_report,
 )
 
 
 def execute(filters=None):
- 
+
     filters = filters or {}
- 
+
     # 🔥 convert item_group multiselect safely
 
     if filters.get("item_group"):
@@ -33,27 +37,24 @@ def execute(filters=None):
         if isinstance(filters.get("item_group"), str):
 
             filters["item_group"] = filters.get("item_group").split("\n")
- 
+
         elif isinstance(filters.get("item_group"), list):
 
             filters["item_group"] = [
-
                 d.get("value") if isinstance(d, dict) else d
-
                 for d in filters.get("item_group")
-
             ]
- 
+
     is_reposting_item_valuation_in_progress()
 
     include_uom = filters.get("include_uom")
- 
+
     columns = get_columns(filters)
 
     items = get_items(filters)
 
     sl_entries = get_stock_ledger_entries(filters, items)
- 
+
     item_details = get_item_details(items, sl_entries, include_uom)
 
     secondary_uom_map = get_secondary_uom_map(items, sl_entries, item_details)
@@ -61,7 +62,7 @@ def execute(filters=None):
     secondary_ledger_map = get_secondary_uom_ledger_entry_map(filters, items)
 
     reserved_stock_map = get_reserved_stock_map(items, sl_entries)
- 
+
     if filters.get("batch_no"):
 
         opening_row = get_opening_balance_from_batch(filters, columns, sl_entries)
@@ -69,456 +70,449 @@ def execute(filters=None):
     else:
 
         opening_row = get_opening_balance(filters, columns, sl_entries)
- 
+
     precision = cint(frappe.db.get_single_value("System Settings", "float_precision"))
 
     bundle_details = {}
- 
+
     if filters.get("segregate_serial_batch_bundle"):
 
         bundle_details = get_serial_batch_bundle_details(sl_entries, filters)
- 
+
     data = []
 
     conversion_factors = []
- 
+
     if opening_row:
 
         data.append(opening_row)
 
         conversion_factors.append(0)
- 
+
     actual_qty = 0
 
     stock_value = 0
- 
+
     if opening_row:
 
         actual_qty = opening_row.get("qty_after_transaction")
 
         stock_value = opening_row.get("stock_value")
- 
+
     available_serial_nos = {}
 
-    inventory_dimension_filters_applied = check_inventory_dimension_filters_applied(filters)
- 
+    inventory_dimension_filters_applied = check_inventory_dimension_filters_applied(
+        filters
+    )
+
     batch_balance_dict = frappe._dict({})
- 
+
     if actual_qty and filters.get("batch_no"):
 
         batch_balance_dict[filters.batch_no] = [actual_qty, stock_value]
- 
+
     for sle in sl_entries:
 
         item_detail = item_details[sle.item_code]
- 
+
         sle.update(item_detail)
- 
+
         apply_secondary_uom_details(sle, secondary_uom_map, secondary_ledger_map)
- 
+
         if bundle_info := bundle_details.get(sle.serial_and_batch_bundle):
 
             bundle_rows = get_segregated_bundle_entries(
-
                 sle, bundle_info, batch_balance_dict, filters
-
             )
- 
+
             apply_details_to_rows(
-
-                bundle_rows,
-
-                secondary_uom_map,
-
-                secondary_ledger_map,
-
-                reserved_stock_map
-
+                bundle_rows, secondary_uom_map, secondary_ledger_map, reserved_stock_map
             )
- 
+
             data.extend(bundle_rows)
 
             continue
- 
+
         if filters.get("batch_no") or inventory_dimension_filters_applied:
 
             actual_qty += flt(sle.actual_qty, precision)
 
             stock_value += sle.stock_value_difference
- 
+
             if sle.batch_no:
 
                 if not batch_balance_dict.get(sle.batch_no):
 
                     batch_balance_dict[sle.batch_no] = [0, 0]
- 
+
                 batch_balance_dict[sle.batch_no][0] += sle.actual_qty
 
                 batch_balance_dict[sle.batch_no][1] += stock_value
- 
+
             if filters.get("segregate_serial_batch_bundle"):
 
                 actual_qty = batch_balance_dict[sle.batch_no][0]
- 
+
             if sle.voucher_type == "Stock Reconciliation" and not sle.actual_qty:
 
                 actual_qty = sle.qty_after_transaction
 
                 stock_value = sle.stock_value
- 
-            sle.update({
 
-                "qty_after_transaction": actual_qty,
+            sle.update(
+                {"qty_after_transaction": actual_qty, "stock_value": stock_value}
+            )
 
-                "stock_value": stock_value
+        sle.update(
+            {"in_qty": max(sle.actual_qty, 0), "out_qty": min(sle.actual_qty, 0)}
+        )
 
-            })
- 
-        sle.update({
-
-            "in_qty": max(sle.actual_qty, 0),
-
-            "out_qty": min(sle.actual_qty, 0)
-
-        })
- 
         if sle.serial_no:
 
             update_available_serial_nos(available_serial_nos, sle)
- 
+
         if sle.actual_qty:
 
             sle["in_out_rate"] = flt(
-
                 sle.stock_value_difference / sle.actual_qty, precision
-
             )
- 
+
         elif sle.voucher_type == "Stock Reconciliation":
 
             sle["in_out_rate"] = sle.valuation_rate
- 
+
         apply_value_details(sle)
 
         apply_reserved_stock_details(sle, reserved_stock_map)
- 
+
         data.append(sle)
- 
+
         if include_uom:
 
             conversion_factors.append(item_detail.conversion_factor)
- 
-    update_included_uom_in_report(
 
-        columns,
+    update_included_uom_in_report(columns, data, include_uom, conversion_factors)
 
-        data,
-
-        include_uom,
-
-        conversion_factors
-
-    )
- 
     return columns, data
- 
+
 
 def get_segregated_bundle_entries(sle, bundle_details, batch_balance_dict, filters):
-	segregated_entries = []
-	qty_before_transaction = sle.qty_after_transaction - sle.actual_qty
-	stock_value_before_transaction = sle.stock_value - sle.stock_value_difference
+    segregated_entries = []
+    qty_before_transaction = sle.qty_after_transaction - sle.actual_qty
+    stock_value_before_transaction = sle.stock_value - sle.stock_value_difference
 
-	for row in bundle_details:
-		new_sle = copy.deepcopy(sle)
-		new_sle.update(row)
-		new_sle.update(
-			{
-				"in_out_rate": flt(new_sle.stock_value_difference / row.qty) if row.qty else 0,
-				"in_qty": row.qty if row.qty > 0 else 0,
-				"out_qty": row.qty if row.qty < 0 else 0,
-				"qty_after_transaction": qty_before_transaction + row.qty,
-				"stock_value": stock_value_before_transaction + new_sle.stock_value_difference,
-				"incoming_rate": row.incoming_rate if row.qty > 0 else 0,
-			}
-		)
+    for row in bundle_details:
+        new_sle = copy.deepcopy(sle)
+        new_sle.update(row)
+        new_sle.update(
+            {
+                "in_out_rate": (
+                    flt(new_sle.stock_value_difference / row.qty) if row.qty else 0
+                ),
+                "in_qty": row.qty if row.qty > 0 else 0,
+                "out_qty": row.qty if row.qty < 0 else 0,
+                "qty_after_transaction": qty_before_transaction + row.qty,
+                "stock_value": stock_value_before_transaction
+                + new_sle.stock_value_difference,
+                "incoming_rate": row.incoming_rate if row.qty > 0 else 0,
+            }
+        )
 
-		if filters.get("batch_no") and row.batch_no:
-			if not batch_balance_dict.get(row.batch_no):
-				batch_balance_dict[row.batch_no] = [0, 0]
+        if filters.get("batch_no") and row.batch_no:
+            if not batch_balance_dict.get(row.batch_no):
+                batch_balance_dict[row.batch_no] = [0, 0]
 
-			batch_balance_dict[row.batch_no][0] += row.qty
-			batch_balance_dict[row.batch_no][1] += row.stock_value_difference
+            batch_balance_dict[row.batch_no][0] += row.qty
+            batch_balance_dict[row.batch_no][1] += row.stock_value_difference
 
-			new_sle.update(
-				{
-					"qty_after_transaction": batch_balance_dict[row.batch_no][0],
-					"stock_value": batch_balance_dict[row.batch_no][1],
-				}
-			)
+            new_sle.update(
+                {
+                    "qty_after_transaction": batch_balance_dict[row.batch_no][0],
+                    "stock_value": batch_balance_dict[row.batch_no][1],
+                }
+            )
 
-		qty_before_transaction += row.qty
-		stock_value_before_transaction += new_sle.stock_value_difference
+        qty_before_transaction += row.qty
+        stock_value_before_transaction += new_sle.stock_value_difference
 
-		new_sle.valuation_rate = (
-			stock_value_before_transaction / qty_before_transaction if qty_before_transaction else 0
-		)
+        new_sle.valuation_rate = (
+            stock_value_before_transaction / qty_before_transaction
+            if qty_before_transaction
+            else 0
+        )
 
-		segregated_entries.append(new_sle)
+        segregated_entries.append(new_sle)
 
-	return segregated_entries
+    return segregated_entries
 
 
 def get_serial_batch_bundle_details(sl_entries, filters=None):
-	bundle_details = []
-	for sle in sl_entries:
-		if sle.serial_and_batch_bundle:
-			bundle_details.append(sle.serial_and_batch_bundle)
+    bundle_details = []
+    for sle in sl_entries:
+        if sle.serial_and_batch_bundle:
+            bundle_details.append(sle.serial_and_batch_bundle)
 
-	if not bundle_details:
-		return frappe._dict({})
+    if not bundle_details:
+        return frappe._dict({})
 
-	query_filers = {"parent": ("in", bundle_details)}
-	if filters.get("batch_no"):
-		query_filers["batch_no"] = filters.batch_no
+    query_filers = {"parent": ("in", bundle_details)}
+    if filters.get("batch_no"):
+        query_filers["batch_no"] = filters.batch_no
 
-	_bundle_details = frappe._dict({})
-	batch_entries = frappe.get_all(
-		"Serial and Batch Entry",
-		filters=query_filers,
-		fields=["parent", "qty", "incoming_rate", "stock_value_difference", "batch_no", "serial_no"],
-		order_by="parent, idx",
-	)
-	for entry in batch_entries:
-		_bundle_details.setdefault(entry.parent, []).append(entry)
+    _bundle_details = frappe._dict({})
+    batch_entries = frappe.get_all(
+        "Serial and Batch Entry",
+        filters=query_filers,
+        fields=[
+            "parent",
+            "qty",
+            "incoming_rate",
+            "stock_value_difference",
+            "batch_no",
+            "serial_no",
+        ],
+        order_by="parent, idx",
+    )
+    for entry in batch_entries:
+        _bundle_details.setdefault(entry.parent, []).append(entry)
 
-	return _bundle_details
+    return _bundle_details
 
 
 def update_available_serial_nos(available_serial_nos, sle):
-	serial_nos = get_serial_nos(sle.serial_no)
-	key = (sle.item_code, sle.warehouse)
-	if key not in available_serial_nos:
-		stock_balance = get_stock_balance_for(
-			sle.item_code, sle.warehouse, sle.posting_date, sle.posting_time
-		)
-		serials = get_serial_nos(stock_balance["serial_nos"]) if stock_balance["serial_nos"] else []
-		available_serial_nos.setdefault(key, serials)
+    serial_nos = get_serial_nos(sle.serial_no)
+    key = (sle.item_code, sle.warehouse)
+    if key not in available_serial_nos:
+        stock_balance = get_stock_balance_for(
+            sle.item_code, sle.warehouse, sle.posting_date, sle.posting_time
+        )
+        serials = (
+            get_serial_nos(stock_balance["serial_nos"])
+            if stock_balance["serial_nos"]
+            else []
+        )
+        available_serial_nos.setdefault(key, serials)
 
-	existing_serial_no = available_serial_nos[key]
-	for sn in serial_nos:
-		if sle.actual_qty > 0:
-			if sn in existing_serial_no:
-				existing_serial_no.remove(sn)
-			else:
-				existing_serial_no.append(sn)
-		else:
-			if sn in existing_serial_no:
-				existing_serial_no.remove(sn)
-			else:
-				existing_serial_no.append(sn)
+    existing_serial_no = available_serial_nos[key]
+    for sn in serial_nos:
+        if sle.actual_qty > 0:
+            if sn in existing_serial_no:
+                existing_serial_no.remove(sn)
+            else:
+                existing_serial_no.append(sn)
+        else:
+            if sn in existing_serial_no:
+                existing_serial_no.remove(sn)
+            else:
+                existing_serial_no.append(sn)
 
-	sle.balance_serial_no = "\n".join(existing_serial_no)
+    sle.balance_serial_no = "\n".join(existing_serial_no)
 
 
 def get_columns(filters):
-	columns = [
-		{
-			"label": _("Item"),
-			"fieldname": "item_code",
-			"fieldtype": "Link",
-			"options": "Item",
-			"width": 120,
-		},
-		{"label": _("Item Name"), "fieldname": "item_name", "width": 160},
-		{
-			"label": _("Item Group"),
-			"fieldname": "item_group",
-			"fieldtype": "Link",
-			"options": "Item Group",
-			"width": 140,
-		},
-		{
-			"label": _("Warehouse"),
-			"fieldname": "warehouse",
-			"fieldtype": "Link",
-			"options": "Warehouse",
-			"width": 160,
-		},
-  		{
-			"label": _("Balance Qty"),
-			"fieldname": "qty_after_transaction",
-			"fieldtype": "Float",
-			"width": 110,
-			"convertible": "qty",
-		},
-		{
-			"label": _("Stock UOM"),
-			"fieldname": "stock_uom",
-			"fieldtype": "Link",
-			"options": "UOM",
-			"width": 90,
-		},
-  {
-			"label": _("Secondary UOM Qty"),
-			"fieldname": "secondary_uom_qty",
-			"fieldtype": "Float",
-			"width": 140,
-		},
-		{
-			"label": _("Secondary UOM"),
-			"fieldname": "secondary_uom",
-			"fieldtype": "Link",
-			"options": "UOM",
-			"width": 120,
-		},
-		
-		
-		{
-			"label": _("In Qty"),
-			"fieldname": "in_qty",
-			"fieldtype": "Float",
-			"width": 90,
-			"convertible": "qty",
-		},
-		{
-			"label": _("In Value"),
-			"fieldname": "in_value",
-			"fieldtype": "Currency",
-			"width": 110,
-			"options": "Company:company:default_currency",
-		},
-		{
-			"label": _("Out Qty"),
-			"fieldname": "out_qty",
-			"fieldtype": "Float",
-			"width": 90,
-			"convertible": "qty",
-		},
-		{
-			"label": _("Out Value"),
-			"fieldname": "out_value",
-			"fieldtype": "Currency",
-			"width": 110,
-			"options": "Company:company:default_currency",
-		},
-		{
-			"label": _("Valuation Rate"),
-			"fieldname": "valuation_rate",
-			"fieldtype": filters.valuation_field_type,
-			"width": 120,
-			"options": "Company:company:default_currency"
-			if filters.valuation_field_type == "Currency"
-			else None,
-			"convertible": "rate",
-		},
-  {
-			"label": _("Balance Value"),
-			"fieldname": "stock_value",
-			"fieldtype": "Currency",
-			"width": 120,
-			"options": "Company:company:default_currency",
-		},
-		{
-			"label": _("Reserved Stock"),
-			"fieldname": "reserved_stock",
-			"fieldtype": "Float",
-			"width": 120,
-		},
-		{
-			"label": _("Company"),
-			"fieldname": "company",
-			"fieldtype": "Link",
-			"options": "Company",
-			"width": 120,
-		},
-	]
+    columns = [
+        {
+            "label": _("Item"),
+            "fieldname": "item_code",
+            "fieldtype": "Link",
+            "options": "Item",
+            "width": 120,
+        },
+        {"label": _("Item Name"), "fieldname": "item_name", "width": 160},
+        {
+            "label": _("Item Group"),
+            "fieldname": "item_group",
+            "fieldtype": "Link",
+            "options": "Item Group",
+            "width": 140,
+        },
+        {
+            "label": _("Warehouse"),
+            "fieldname": "warehouse",
+            "fieldtype": "Link",
+            "options": "Warehouse",
+            "width": 160,
+        },
+        {
+            "label": _("Balance Qty"),
+            "fieldname": "qty_after_transaction",
+            "fieldtype": "Float",
+            "width": 110,
+            "convertible": "qty",
+        },
+        {
+            "label": _("Stock UOM"),
+            "fieldname": "stock_uom",
+            "fieldtype": "Link",
+            "options": "UOM",
+            "width": 90,
+        },
+        {
+            "label": _("Secondary UOM Qty"),
+            "fieldname": "secondary_uom_qty",
+            "fieldtype": "Float",
+            "width": 140,
+        },
+        {
+            "label": _("Secondary UOM"),
+            "fieldname": "secondary_uom",
+            "fieldtype": "Link",
+            "options": "UOM",
+            "width": 120,
+        },
+        {
+            "label": _("In Qty"),
+            "fieldname": "in_qty",
+            "fieldtype": "Float",
+            "width": 90,
+            "convertible": "qty",
+        },
+        {
+            "label": _("In Value"),
+            "fieldname": "in_value",
+            "fieldtype": "Currency",
+            "width": 110,
+            "options": "Company:company:default_currency",
+        },
+        {
+            "label": _("Out Qty"),
+            "fieldname": "out_qty",
+            "fieldtype": "Float",
+            "width": 90,
+            "convertible": "qty",
+        },
+        {
+            "label": _("Out Value"),
+            "fieldname": "out_value",
+            "fieldtype": "Currency",
+            "width": 110,
+            "options": "Company:company:default_currency",
+        },
+        {
+            "label": _("Valuation Rate"),
+            "fieldname": "valuation_rate",
+            "fieldtype": filters.valuation_field_type,
+            "width": 120,
+            "options": (
+                "Company:company:default_currency"
+                if filters.valuation_field_type == "Currency"
+                else None
+            ),
+            "convertible": "rate",
+        },
+        {
+            "label": _("Balance Value"),
+            "fieldname": "stock_value",
+            "fieldtype": "Currency",
+            "width": 120,
+            "options": "Company:company:default_currency",
+        },
+        {
+            "label": _("Reserved Stock"),
+            "fieldname": "reserved_stock",
+            "fieldtype": "Float",
+            "width": 120,
+        },
+        {
+            "label": _("Company"),
+            "fieldname": "company",
+            "fieldtype": "Link",
+            "options": "Company",
+            "width": 120,
+        },
+    ]
 
-	return columns
+    return columns
 
 
 def get_stock_ledger_entries(filters, items):
-	from_date = get_datetime(filters.from_date + " 00:00:00")
-	to_date = get_datetime(filters.to_date + " 23:59:59")
+    from_date = get_datetime(filters.from_date + " 00:00:00")
+    to_date = get_datetime(filters.to_date + " 23:59:59")
 
-	sle = frappe.qb.DocType("Stock Ledger Entry")
-	query = (
-		frappe.qb.from_(sle)
-		.select(
-			sle.item_code,
-			sle.posting_datetime.as_("date"),
-			sle.warehouse,
-			sle.posting_date,
-			sle.posting_time,
-			sle.actual_qty,
-			sle.incoming_rate,
-			sle.valuation_rate,
-			sle.company,
-			sle.voucher_type,
-			sle.qty_after_transaction,
-			sle.stock_value_difference,
-			sle.serial_and_batch_bundle,
-			sle.voucher_no,
-			sle.stock_value,
-			sle.batch_no,
-			sle.serial_no,
-			sle.project,
-		)
-		.where((sle.docstatus < 2) & (sle.is_cancelled == 0) & (sle.posting_datetime[from_date:to_date]))
-		.orderby(sle.posting_datetime)
-		.orderby(sle.creation)
-	)
+    sle = frappe.qb.DocType("Stock Ledger Entry")
+    query = (
+        frappe.qb.from_(sle)
+        .select(
+            sle.item_code,
+            sle.posting_datetime.as_("date"),
+            sle.warehouse,
+            sle.posting_date,
+            sle.posting_time,
+            sle.actual_qty,
+            sle.incoming_rate,
+            sle.valuation_rate,
+            sle.company,
+            sle.voucher_type,
+            sle.qty_after_transaction,
+            sle.stock_value_difference,
+            sle.serial_and_batch_bundle,
+            sle.voucher_no,
+            sle.stock_value,
+            sle.batch_no,
+            sle.serial_no,
+            sle.project,
+        )
+        .where(
+            (sle.docstatus < 2)
+            & (sle.is_cancelled == 0)
+            & (sle.posting_datetime[from_date:to_date])
+        )
+        .orderby(sle.posting_datetime)
+        .orderby(sle.creation)
+    )
 
-	inventory_dimension_fields = get_inventory_dimension_fields()
-	if inventory_dimension_fields:
-		for fieldname in inventory_dimension_fields:
-			query = query.select(fieldname)
-			if fieldname in filters and filters.get(fieldname):
-				query = query.where(sle[fieldname].isin(filters.get(fieldname)))
+    inventory_dimension_fields = get_inventory_dimension_fields()
+    if inventory_dimension_fields:
+        for fieldname in inventory_dimension_fields:
+            query = query.select(fieldname)
+            if fieldname in filters and filters.get(fieldname):
+                query = query.where(sle[fieldname].isin(filters.get(fieldname)))
 
-	if items:
-		query = query.where(sle.item_code.isin(items))
+    if items:
+        query = query.where(sle.item_code.isin(items))
 
-	for field in ["voucher_no", "project", "company"]:
-		if filters.get(field) and field not in inventory_dimension_fields:
-			query = query.where(sle[field] == filters.get(field))
+    for field in ["voucher_no", "project", "company"]:
+        if filters.get(field) and field not in inventory_dimension_fields:
+            query = query.where(sle[field] == filters.get(field))
 
-	if filters.get("batch_no"):
-		bundles = get_serial_and_batch_bundles(filters)
+    if filters.get("batch_no"):
+        bundles = get_serial_and_batch_bundles(filters)
 
-		if bundles:
-			query = query.where(
-				(sle.serial_and_batch_bundle.isin(bundles)) | (sle.batch_no == filters.batch_no)
-			)
-		else:
-			query = query.where(sle.batch_no == filters.batch_no)
+        if bundles:
+            query = query.where(
+                (sle.serial_and_batch_bundle.isin(bundles))
+                | (sle.batch_no == filters.batch_no)
+            )
+        else:
+            query = query.where(sle.batch_no == filters.batch_no)
 
-	query = apply_warehouse_filter(query, sle, filters)
+    query = apply_warehouse_filter(query, sle, filters)
 
-	return query.run(as_dict=True)
+    return query.run(as_dict=True)
 
 
 def get_serial_and_batch_bundles(filters):
-	SBB = frappe.qb.DocType("Serial and Batch Bundle")
-	SBE = frappe.qb.DocType("Serial and Batch Entry")
+    SBB = frappe.qb.DocType("Serial and Batch Bundle")
+    SBE = frappe.qb.DocType("Serial and Batch Entry")
 
-	query = (
-		frappe.qb.from_(SBE)
-		.inner_join(SBB)
-		.on(SBE.parent == SBB.name)
-		.select(SBE.parent)
-		.where(
-			(SBB.docstatus == 1)
-			& (SBB.has_batch_no == 1)
-			& (SBB.voucher_no.notnull())
-			& (SBE.batch_no == filters.batch_no)
-		)
-	)
+    query = (
+        frappe.qb.from_(SBE)
+        .inner_join(SBB)
+        .on(SBE.parent == SBB.name)
+        .select(SBE.parent)
+        .where(
+            (SBB.docstatus == 1)
+            & (SBB.has_batch_no == 1)
+            & (SBB.voucher_no.notnull())
+            & (SBE.batch_no == filters.batch_no)
+        )
+    )
 
-	return query.run(pluck=SBE.parent)
+    return query.run(pluck=SBE.parent)
 
 
 def get_inventory_dimension_fields():
-	return [dimension.fieldname for dimension in get_inventory_dimensions()]
+    return [dimension.fieldname for dimension in get_inventory_dimensions()]
 
 
 # def get_items(filters):
@@ -544,6 +538,7 @@ def get_inventory_dimension_fields():
 # 			query = query.where(condition)
 
 # 		items = [r[0] for r in query.run()]
+
 
 # 	return items
 def get_items(filters):
@@ -581,386 +576,365 @@ def get_items(filters):
 
 
 def get_secondary_uom_map(items, sl_entries, item_details=None):
-	if not items:
-		items = list(set(d.item_code for d in sl_entries))
+    if not items:
+        items = list(set(d.item_code for d in sl_entries))
 
-	if not items:
-		return {}
+    if not items:
+        return {}
 
-	if not item_details:
-		item_details = {}
+    if not item_details:
+        item_details = {}
 
-	ucd = frappe.qb.DocType("UOM Conversion Detail")
-	query = (
-		frappe.qb.from_(ucd)
-		.select(ucd.parent, ucd.uom, ucd.idx, ucd.conversion_factor)
-		.where(ucd.parent.isin(items))
-		.orderby(ucd.parent)
-		.orderby(ucd.idx)
-	)
+    ucd = frappe.qb.DocType("UOM Conversion Detail")
+    query = (
+        frappe.qb.from_(ucd)
+        .select(ucd.parent, ucd.uom, ucd.idx, ucd.conversion_factor)
+        .where(ucd.parent.isin(items))
+        .orderby(ucd.parent)
+        .orderby(ucd.idx)
+    )
 
-	rows = query.run(as_dict=True)
-	secondary_uom_map = {}
-	for row in rows:
-		if row.parent in secondary_uom_map:
-			continue
+    rows = query.run(as_dict=True)
+    secondary_uom_map = {}
+    for row in rows:
+        if row.parent in secondary_uom_map:
+            continue
 
-		stock_uom = item_details.get(row.parent, {}).get("stock_uom")
-		# Follow doc-events logic: pick first UOM that is not stock UOM.
-		# Do not rely on idx because many items keep secondary UOM at idx=1.
-		if stock_uom and row.uom == stock_uom:
-			continue
+        stock_uom = item_details.get(row.parent, {}).get("stock_uom")
+        # Follow doc-events logic: pick first UOM that is not stock UOM.
+        # Do not rely on idx because many items keep secondary UOM at idx=1.
+        if stock_uom and row.uom == stock_uom:
+            continue
 
-		secondary_uom_map[row.parent] = {
-			"uom": row.uom,
-			"conversion_factor": flt(row.conversion_factor),
-		}
+        secondary_uom_map[row.parent] = {
+            "uom": row.uom,
+            "conversion_factor": flt(row.conversion_factor),
+        }
 
-	return secondary_uom_map
+    return secondary_uom_map
 
 
 def get_secondary_uom_ledger_entry_map(filters, items):
-	from_date = get_datetime(filters.from_date + " 00:00:00")
-	to_date = get_datetime(filters.to_date + " 23:59:59")
+    from_date = get_datetime(filters.from_date + " 00:00:00")
+    to_date = get_datetime(filters.to_date + " 23:59:59")
 
-	sule = frappe.qb.DocType("Secondary UOM Ledger Entry")
-	query = (
-		frappe.qb.from_(sule)
-		.select(
-			sule.item_code,
-			sule.warehouse,
-			sule.posting_date,
-			sule.posting_time,
-			sule.voucher_type,
-			sule.voucher_no,
-			sule.serial_and_batch_bundle,
-			sule.batch_no,
-			sule.actual_qty,
-			sule.unit_of_measure,
-			sule.company,
-		)
-		.where(
-			(sule.docstatus < 2)
-			& (sule.is_cancelled == 0)
-			& (CombineDatetime(sule.posting_date, sule.posting_time)[from_date:to_date])
-		)
-	)
+    sule = frappe.qb.DocType("Secondary UOM Ledger Entry")
+    query = (
+        frappe.qb.from_(sule)
+        .select(
+            sule.item_code,
+            sule.warehouse,
+            sule.voucher_type,
+            sule.voucher_no,
+            sule.batch_no,
+            sule.actual_qty,
+            sule.unit_of_measure,
+            sule.company,
+        )
+        .where(
+            (sule.docstatus < 2)
+            & (sule.is_cancelled == 0)
+            & (CombineDatetime(sule.posting_date, sule.posting_time)[from_date:to_date])
+        )
+    )
 
-	if items:
-		query = query.where(sule.item_code.isin(items))
+    if items:
+        query = query.where(sule.item_code.isin(items))
 
-	for field in ["voucher_no", "company"]:
-		if filters.get(field):
-			query = query.where(sule[field] == filters.get(field))
+    for field in ["voucher_no", "company"]:
+        if filters.get(field):
+            query = query.where(sule[field] == filters.get(field))
 
-	if filters.get("batch_no"):
-		query = query.where(sule.batch_no == filters.batch_no)
+    if filters.get("batch_no"):
+        query = query.where(sule.batch_no == filters.batch_no)
 
-	query = apply_warehouse_filter(query, sule, filters)
+    query = apply_warehouse_filter(query, sule, filters)
 
-	rows = query.run(as_dict=True)
-	secondary_ledger_map = {}
-	for row in rows:
-		key = get_secondary_uom_ledger_key(row)
-		if key not in secondary_ledger_map:
-			secondary_ledger_map[key] = {
-				"secondary_uom_qty": flt(row.actual_qty),
-				"secondary_uom": row.unit_of_measure,
-			}
-			continue
+    rows = query.run(as_dict=True)
+    secondary_ledger_map = {}
+    for row in rows:
+        key = get_secondary_uom_ledger_key(row)
+        secondary_ledger_map[key] = {
+            "secondary_uom_qty": flt(row.actual_qty),
+            "secondary_uom": row.unit_of_measure,
+        }
 
-		secondary_ledger_map[key]["secondary_uom_qty"] += flt(row.actual_qty)
-		if not secondary_ledger_map[key]["secondary_uom"]:
-			secondary_ledger_map[key]["secondary_uom"] = row.unit_of_measure
-
-	return secondary_ledger_map
+    return secondary_ledger_map
 
 
 def get_secondary_uom_ledger_key(entry):
-    # Normalize posting_time to HH:MM:SS string regardless of type
-    pt = entry.posting_time
-    if hasattr(pt, "seconds"):  # timedelta
-        total = int(pt.total_seconds())
-        h, remainder = divmod(total, 3600)
-        m, s = divmod(remainder, 60)
-        posting_time = f"{h:02}:{m:02}:{s:02}"
-    elif hasattr(pt, "isoformat"):  # datetime.time
-        posting_time = pt.strftime("%H:%M:%S")
-    else:
-        posting_time = str(pt or "")
-
     return (
         entry.item_code,
         entry.warehouse,
-        entry.posting_date,
-        posting_time,
         entry.voucher_type,
         entry.voucher_no,
-        entry.serial_and_batch_bundle or "",
         entry.batch_no or "",
     )
 
 
 def apply_secondary_uom_details(sle, secondary_uom_map, secondary_ledger_map):
-    if not secondary_uom_map and not secondary_ledger_map:
-        return
-
     secondary_uom_row = secondary_uom_map.get(sle.item_code) or {}
     secondary_uom = secondary_uom_row.get("uom")
-    secondary_conversion_factor = flt(secondary_uom_row.get("conversion_factor"))
-    secondary_uom_qty = None
+    secondary_uom_qty = 0
 
     if secondary_ledger_map:
         key = get_secondary_uom_ledger_key(sle)
         if secondary_row := secondary_ledger_map.get(key):
+            secondary_uom_qty = flt(secondary_row.get("secondary_uom_qty"))
             secondary_uom = secondary_row.get("secondary_uom") or secondary_uom
-            secondary_uom_qty = secondary_row.get("secondary_uom_qty")
 
-    # Fallback: derive from actual_qty (transaction qty), not balance qty
-    if secondary_uom_qty is None and secondary_conversion_factor:
-        actual_qty = flt(sle.get("actual_qty") or 0)
-        secondary_uom_qty = actual_qty / secondary_conversion_factor if secondary_conversion_factor else 0
-
-    sle.update({
-        "secondary_uom": secondary_uom,
-        "secondary_uom_qty": secondary_uom_qty,
-    })
+    sle.update(
+        {
+            "secondary_uom": secondary_uom,
+            "secondary_uom_qty": secondary_uom_qty,
+        }
+    )
 
 
 def apply_value_details(sle, is_opening=False):
-	if is_opening:
-		sle.update({"in_value": None, "out_value": None})
-		return
+    if is_opening:
+        sle.update({"in_value": None, "out_value": None})
+        return
 
-	value_diff = flt(sle.get("stock_value_difference"))
-	in_value = value_diff if value_diff > 0 else 0
-	out_value = abs(value_diff) if value_diff < 0 else 0
-	sle.update({"in_value": in_value, "out_value": out_value})
+    value_diff = flt(sle.get("stock_value_difference"))
+    in_value = value_diff if value_diff > 0 else 0
+    out_value = abs(value_diff) if value_diff < 0 else 0
+    sle.update({"in_value": in_value, "out_value": out_value})
 
 
-def apply_details_to_rows(rows, secondary_uom_map, secondary_ledger_map, reserved_stock_map):
-	for row in rows:
-		apply_secondary_uom_details(row, secondary_uom_map, secondary_ledger_map)
-		apply_value_details(row)
-		apply_reserved_stock_details(row, reserved_stock_map)
+def apply_details_to_rows(
+    rows, secondary_uom_map, secondary_ledger_map, reserved_stock_map
+):
+    for row in rows:
+        apply_secondary_uom_details(row, secondary_uom_map, secondary_ledger_map)
+        apply_value_details(row)
+        apply_reserved_stock_details(row, reserved_stock_map)
 
 
 def apply_reserved_stock_details(sle, reserved_stock_map):
-	if not reserved_stock_map:
-		return
+    if not reserved_stock_map:
+        return
 
-	key = (sle.get("item_code"), sle.get("warehouse"))
-	if key[0] and key[1]:
-		sle["reserved_stock"] = reserved_stock_map.get(key, 0.0)
+    key = (sle.get("item_code"), sle.get("warehouse"))
+    if key[0] and key[1]:
+        sle["reserved_stock"] = reserved_stock_map.get(key, 0.0)
 
 
 def get_reserved_stock_map(items, sl_entries):
-	from erpnext.stock.doctype.stock_reservation_entry.stock_reservation_entry import (
-		get_sre_reserved_qty_for_items_and_warehouses as get_reserved_qty_details,
-	)
+    from erpnext.stock.doctype.stock_reservation_entry.stock_reservation_entry import (
+        get_sre_reserved_qty_for_items_and_warehouses as get_reserved_qty_details,
+    )
 
-	item_codes = set(items or [])
-	warehouse_list = set()
+    item_codes = set(items or [])
+    warehouse_list = set()
 
-	for entry in sl_entries:
-		item_codes.add(entry.item_code)
-		warehouse_list.add(entry.warehouse)
+    for entry in sl_entries:
+        item_codes.add(entry.item_code)
+        warehouse_list.add(entry.warehouse)
 
-	if not item_codes or not warehouse_list:
-		return {}
+    if not item_codes or not warehouse_list:
+        return {}
 
-	reserved = get_reserved_qty_details(list(item_codes), list(warehouse_list))
-	return reserved or {}
+    reserved = get_reserved_qty_details(list(item_codes), list(warehouse_list))
+    return reserved or {}
 
 
 def get_item_details(items, sl_entries, include_uom):
-	item_details = {}
-	if not items:
-		items = list(set(d.item_code for d in sl_entries))
+    item_details = {}
+    if not items:
+        items = list(set(d.item_code for d in sl_entries))
 
-	if not items:
-		return item_details
+    if not items:
+        return item_details
 
-	item = frappe.qb.DocType("Item")
-	query = (
-		frappe.qb.from_(item)
-		.select(item.name, item.item_name, item.description, item.item_group, item.brand, item.stock_uom)
-		.where(item.name.isin(items))
-	)
+    item = frappe.qb.DocType("Item")
+    query = (
+        frappe.qb.from_(item)
+        .select(
+            item.name,
+            item.item_name,
+            item.description,
+            item.item_group,
+            item.brand,
+            item.stock_uom,
+        )
+        .where(item.name.isin(items))
+    )
 
-	if include_uom:
-		ucd = frappe.qb.DocType("UOM Conversion Detail")
-		query = (
-			query.left_join(ucd)
-			.on((ucd.parent == item.name) & (ucd.uom == include_uom))
-			.select(ucd.conversion_factor)
-		)
+    if include_uom:
+        ucd = frappe.qb.DocType("UOM Conversion Detail")
+        query = (
+            query.left_join(ucd)
+            .on((ucd.parent == item.name) & (ucd.uom == include_uom))
+            .select(ucd.conversion_factor)
+        )
 
-	res = query.run(as_dict=True)
+    res = query.run(as_dict=True)
 
-	for item in res:
-		item_details.setdefault(item.name, item)
+    for item in res:
+        item_details.setdefault(item.name, item)
 
-	return item_details
+    return item_details
 
 
 # TODO: THIS IS NOT USED
 def get_sle_conditions(filters):
-	conditions = []
-	if filters.get("warehouse"):
-		warehouse_condition = get_warehouse_condition(filters.get("warehouse"))
-		if warehouse_condition:
-			conditions.append(warehouse_condition)
-	if filters.get("voucher_no"):
-		conditions.append("voucher_no=%(voucher_no)s")
-	if filters.get("batch_no"):
-		conditions.append("batch_no=%(batch_no)s")
-	if filters.get("project"):
-		conditions.append("project=%(project)s")
+    conditions = []
+    if filters.get("warehouse"):
+        warehouse_condition = get_warehouse_condition(filters.get("warehouse"))
+        if warehouse_condition:
+            conditions.append(warehouse_condition)
+    if filters.get("voucher_no"):
+        conditions.append("voucher_no=%(voucher_no)s")
+    if filters.get("batch_no"):
+        conditions.append("batch_no=%(batch_no)s")
+    if filters.get("project"):
+        conditions.append("project=%(project)s")
 
-	for dimension in get_inventory_dimensions():
-		if filters.get(dimension.fieldname):
-			conditions.append(f"{dimension.fieldname} in %({dimension.fieldname})s")
+    for dimension in get_inventory_dimensions():
+        if filters.get(dimension.fieldname):
+            conditions.append(f"{dimension.fieldname} in %({dimension.fieldname})s")
 
-	return "and {}".format(" and ".join(conditions)) if conditions else ""
+    return "and {}".format(" and ".join(conditions)) if conditions else ""
 
 
 def get_opening_balance_from_batch(filters, columns, sl_entries):
-	query_filters = {
-		"batch_no": filters.batch_no,
-		"docstatus": 1,
-		"is_cancelled": 0,
-		"posting_date": ("<", filters.from_date),
-		"company": filters.company,
-	}
+    query_filters = {
+        "batch_no": filters.batch_no,
+        "docstatus": 1,
+        "is_cancelled": 0,
+        "posting_date": ("<", filters.from_date),
+        "company": filters.company,
+    }
 
-	for fields in ["item_code", "warehouse"]:
-		if value := filters.get(fields):
-			query_filters[fields] = ("in", value)
+    for fields in ["item_code", "warehouse"]:
+        if value := filters.get(fields):
+            query_filters[fields] = ("in", value)
 
-	opening_data = frappe.get_all(
-		"Stock Ledger Entry",
-		fields=[
-			{"SUM": "actual_qty", "as": "qty_after_transaction"},
-			{"SUM": "stock_value_difference", "as": "stock_value"},
-		],
-		filters=query_filters,
-	)[0]
+    opening_data = frappe.get_all(
+        "Stock Ledger Entry",
+        fields=[
+            {"SUM": "actual_qty", "as": "qty_after_transaction"},
+            {"SUM": "stock_value_difference", "as": "stock_value"},
+        ],
+        filters=query_filters,
+    )[0]
 
-	for field in ["qty_after_transaction", "stock_value", "valuation_rate"]:
-		if opening_data.get(field) is None:
-			opening_data[field] = 0.0
+    for field in ["qty_after_transaction", "stock_value", "valuation_rate"]:
+        if opening_data.get(field) is None:
+            opening_data[field] = 0.0
 
-	table = frappe.qb.DocType("Stock Ledger Entry")
-	sabb_table = frappe.qb.DocType("Serial and Batch Entry")
-	query = (
-		frappe.qb.from_(table)
-		.inner_join(sabb_table)
-		.on(table.serial_and_batch_bundle == sabb_table.parent)
-		.select(
-			Sum(sabb_table.qty).as_("qty"),
-			Sum(sabb_table.stock_value_difference).as_("stock_value"),
-		)
-		.where(
-			(sabb_table.batch_no == filters.batch_no)
-			& (sabb_table.docstatus == 1)
-			& (table.posting_date < filters.from_date)
-			& (table.is_cancelled == 0)
-		)
-	)
+    table = frappe.qb.DocType("Stock Ledger Entry")
+    sabb_table = frappe.qb.DocType("Serial and Batch Entry")
+    query = (
+        frappe.qb.from_(table)
+        .inner_join(sabb_table)
+        .on(table.serial_and_batch_bundle == sabb_table.parent)
+        .select(
+            Sum(sabb_table.qty).as_("qty"),
+            Sum(sabb_table.stock_value_difference).as_("stock_value"),
+        )
+        .where(
+            (sabb_table.batch_no == filters.batch_no)
+            & (sabb_table.docstatus == 1)
+            & (table.posting_date < filters.from_date)
+            & (table.is_cancelled == 0)
+        )
+    )
 
-	for field in ["item_code", "warehouse", "company"]:
-		value = filters.get(field)
+    for field in ["item_code", "warehouse", "company"]:
+        value = filters.get(field)
 
-		if not value:
-			continue
+        if not value:
+            continue
 
-		if isinstance(value, list | tuple):
-			query = query.where(table[field].isin(value))
+        if isinstance(value, list | tuple):
+            query = query.where(table[field].isin(value))
 
-		else:
-			query = query.where(table[field] == value)
+        else:
+            query = query.where(table[field] == value)
 
-	bundle_data = query.run(as_dict=True)
+    bundle_data = query.run(as_dict=True)
 
-	if bundle_data:
-		opening_data.qty_after_transaction += flt(bundle_data[0].qty)
-		opening_data.stock_value += flt(bundle_data[0].stock_value)
-		if opening_data.qty_after_transaction:
-			opening_data.valuation_rate = flt(opening_data.stock_value) / flt(
-				opening_data.qty_after_transaction
-			)
+    if bundle_data:
+        opening_data.qty_after_transaction += flt(bundle_data[0].qty)
+        opening_data.stock_value += flt(bundle_data[0].stock_value)
+        if opening_data.qty_after_transaction:
+            opening_data.valuation_rate = flt(opening_data.stock_value) / flt(
+                opening_data.qty_after_transaction
+            )
 
-	return {
-		"item_code": _("'Opening'"),
-		"qty_after_transaction": opening_data.qty_after_transaction,
-		"valuation_rate": opening_data.valuation_rate,
-		"stock_value": opening_data.stock_value,
-	}
+    return {
+        "item_code": _("'Opening'"),
+        "qty_after_transaction": opening_data.qty_after_transaction,
+        "valuation_rate": opening_data.valuation_rate,
+        "stock_value": opening_data.stock_value,
+    }
 
 
 def get_opening_balance(filters, columns, sl_entries):
-	if not (filters.item_code and filters.warehouse and filters.from_date):
-		return
+    if not (filters.item_code and filters.warehouse and filters.from_date):
+        return
 
-	from erpnext.stock.stock_ledger import get_previous_sle
+    from erpnext.stock.stock_ledger import get_previous_sle
 
-	last_entry = get_previous_sle(
-		{
-			"item_code": filters.item_code,
-			"warehouse_condition": get_warehouse_condition(filters.warehouse),
-			"posting_date": filters.from_date,
-			"posting_time": "00:00:00",
-		}
-	)
+    last_entry = get_previous_sle(
+        {
+            "item_code": filters.item_code,
+            "warehouse_condition": get_warehouse_condition(filters.warehouse),
+            "posting_date": filters.from_date,
+            "posting_time": "00:00:00",
+        }
+    )
 
-	# check if any SLEs are actually Opening Stock Reconciliation
-	for sle in list(sl_entries):
-		if (
-			sle.get("voucher_type") == "Stock Reconciliation"
-			and sle.posting_date == filters.from_date
-			and frappe.db.get_value("Stock Reconciliation", sle.voucher_no, "purpose") == "Opening Stock"
-		):
-			last_entry = sle
-			sl_entries.remove(sle)
+    # check if any SLEs are actually Opening Stock Reconciliation
+    for sle in list(sl_entries):
+        if (
+            sle.get("voucher_type") == "Stock Reconciliation"
+            and sle.posting_date == filters.from_date
+            and frappe.db.get_value("Stock Reconciliation", sle.voucher_no, "purpose")
+            == "Opening Stock"
+        ):
+            last_entry = sle
+            sl_entries.remove(sle)
 
-	row = {
-		"item_code": _("'Opening'"),
-		"qty_after_transaction": last_entry.get("qty_after_transaction", 0),
-		"valuation_rate": last_entry.get("valuation_rate", 0),
-		"stock_value": last_entry.get("stock_value", 0),
-	}
+    row = {
+        "item_code": _("'Opening'"),
+        "qty_after_transaction": last_entry.get("qty_after_transaction", 0),
+        "valuation_rate": last_entry.get("valuation_rate", 0),
+        "stock_value": last_entry.get("stock_value", 0),
+    }
 
-	return row
+    return row
 
 
 def get_warehouse_condition(warehouses):
-	if not warehouses:
-		return ""
+    if not warehouses:
+        return ""
 
-	if isinstance(warehouses, str):
-		warehouses = [warehouses]
+    if isinstance(warehouses, str):
+        warehouses = [warehouses]
 
-	warehouse_range = frappe.get_all(
-		"Warehouse",
-		filters={
-			"name": ("in", warehouses),
-		},
-		fields=["lft", "rgt"],
-		as_list=True,
-	)
+    warehouse_range = frappe.get_all(
+        "Warehouse",
+        filters={
+            "name": ("in", warehouses),
+        },
+        fields=["lft", "rgt"],
+        as_list=True,
+    )
 
-	if not warehouse_range:
-		return ""
+    if not warehouse_range:
+        return ""
 
-	alias = "wh"
-	conditions = []
-	for lft, rgt in warehouse_range:
-		conditions.append(f"({alias}.lft >= {lft} and {alias}.rgt <= {rgt})")
+    alias = "wh"
+    conditions = []
+    for lft, rgt in warehouse_range:
+        conditions.append(f"({alias}.lft >= {lft} and {alias}.rgt <= {rgt})")
 
-	conditions = " or ".join(conditions)
+    conditions = " or ".join(conditions)
 
-	return f" exists (select name from `tabWarehouse` {alias} \
+    return f" exists (select name from `tabWarehouse` {alias} \
 		where ({conditions}) and warehouse = {alias}.name)"
 
 
@@ -982,6 +956,7 @@ def get_warehouse_condition(warehouses):
 # 			return f"item.item_group in (select ig.name from `tabItem Group` ig \
 # 				where ig.lft >= {item_group_details.lft} and ig.rgt <= {item_group_details.rgt} and item.item_group = ig.name)"
 
+
 def get_item_group_condition(item_groups, item_table):
 
     if not item_groups:
@@ -993,8 +968,7 @@ def get_item_group_condition(item_groups, item_table):
 
     if isinstance(item_groups, list):
         item_groups = [
-            d.get("value") if isinstance(d, dict) else d
-            for d in item_groups
+            d.get("value") if isinstance(d, dict) else d for d in item_groups
         ]
 
     ig = frappe.qb.DocType("Item Group")
@@ -1007,9 +981,7 @@ def get_item_group_condition(item_groups, item_table):
         )
 
         if ig_details:
-            ranges.append(
-                (ig.lft >= ig_details.lft) & (ig.rgt <= ig_details.rgt)
-            )
+            ranges.append((ig.lft >= ig_details.lft) & (ig.rgt <= ig_details.rgt))
 
     if not ranges:
         return None
@@ -1018,20 +990,14 @@ def get_item_group_condition(item_groups, item_table):
     for r in ranges[1:]:
         combined = combined | r
 
-    subquery = (
-        frappe.qb.from_(ig)
-        .select(ig.name)
-        .where(combined)
-    )
+    subquery = frappe.qb.from_(ig).select(ig.name).where(combined)
 
     return item_table.item_group.isin(subquery)
 
 
 def check_inventory_dimension_filters_applied(filters) -> bool:
-	for dimension in get_inventory_dimensions():
-		if dimension.fieldname in filters and filters.get(dimension.fieldname):
-			return True
+    for dimension in get_inventory_dimensions():
+        if dimension.fieldname in filters and filters.get(dimension.fieldname):
+            return True
 
-	return False
-
- 
+    return False

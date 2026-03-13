@@ -20,99 +20,155 @@ from erpnext.stock.utils import (
 
 
 def execute(filters=None):
-	is_reposting_item_valuation_in_progress()
-	include_uom = filters.get("include_uom")
-	columns = get_columns(filters)
-	items = get_items(filters)
-	sl_entries = get_stock_ledger_entries(filters, items)
-	item_details = get_item_details(items, sl_entries, include_uom)
-	if filters.get("batch_no"):
-		opening_row = get_opening_balance_from_batch(filters, columns, sl_entries)
-	else:
-		opening_row = get_opening_balance(filters, columns, sl_entries)
+    is_reposting_item_valuation_in_progress()
 
-	precision = cint(frappe.db.get_single_value("System Settings", "float_precision"))
-	bundle_details = {}
+    include_uom = filters.get("include_uom")
 
-	if filters.get("segregate_serial_batch_bundle"):
-		bundle_details = get_serial_batch_bundle_details(sl_entries, filters)
+    columns = get_columns(filters)
+    items = get_items(filters)
 
-	data = []
-	conversion_factors = []
-	if opening_row:
-		# Opening row can be across multiple items, so keep secondary metrics neutral by default.
-		opening_row.update(
-			{
-				"secondary_uom": None,
-				"secondary_in_qty": 0,
-				"secondary_out_qty": 0,
-				"secondary_qty_after_transaction": 0,
-			}
-		)
-		data.append(opening_row)
-		conversion_factors.append(0)
+    sl_entries = get_stock_ledger_entries(filters, items)
 
-	actual_qty = stock_value = 0
-	if opening_row:
-		actual_qty = opening_row.get("qty_after_transaction")
-		stock_value = opening_row.get("stock_value")
+    # ----------------------------
+    # FETCH SECONDARY UOM LEDGER
+    # ----------------------------
+    secondary_entries = get_secondary_uom_entries(filters)
+    secondary_map = get_secondary_qty_map(secondary_entries)
 
-	available_serial_nos = {}
-	inventory_dimension_filters_applied = check_inventory_dimension_filters_applied(filters)
+    secondary_balance = 0
+    # ----------------------------
 
-	batch_balance_dict = frappe._dict({})
-	if actual_qty and filters.get("batch_no"):
-		batch_balance_dict[filters.batch_no] = [actual_qty, stock_value]
+    item_details = get_item_details(items, sl_entries, include_uom)
 
-	for sle in sl_entries:
-		item_detail = item_details[sle.item_code]
+    if filters.get("batch_no"):
+        opening_row = get_opening_balance_from_batch(filters, columns, sl_entries)
+    else:
+        opening_row = get_opening_balance(filters, columns, sl_entries)
 
-		sle.update(item_detail)
-		if bundle_info := bundle_details.get(sle.serial_and_batch_bundle):
-			data.extend(
-				get_segregated_bundle_entries(sle, bundle_info, batch_balance_dict, filters, item_detail)
-			)
-			continue
+    precision = cint(frappe.db.get_single_value("System Settings", "float_precision"))
 
-		if filters.get("batch_no") or inventory_dimension_filters_applied:
-			actual_qty += flt(sle.actual_qty, precision)
-			stock_value += sle.stock_value_difference
-			if sle.batch_no:
-				if not batch_balance_dict.get(sle.batch_no):
-					batch_balance_dict[sle.batch_no] = [0, 0]
+    bundle_details = {}
 
-				batch_balance_dict[sle.batch_no][0] += sle.actual_qty
-				batch_balance_dict[sle.batch_no][1] += stock_value
+    if filters.get("segregate_serial_batch_bundle"):
+        bundle_details = get_serial_batch_bundle_details(sl_entries, filters)
 
-			if filters.get("segregate_serial_batch_bundle"):
-				actual_qty = batch_balance_dict[sle.batch_no][0]
+    data = []
+    conversion_factors = []
 
-			if sle.voucher_type == "Stock Reconciliation" and not sle.actual_qty:
-				actual_qty = sle.qty_after_transaction
-				stock_value = sle.stock_value
+    if opening_row:
+        opening_row.update(
+            {
+                "secondary_uom": None,
+                "secondary_in_qty": 0,
+                "secondary_out_qty": 0,
+                "secondary_qty_after_transaction": 0,
+            }
+        )
 
-			sle.update({"qty_after_transaction": actual_qty, "stock_value": stock_value})
+        data.append(opening_row)
+        conversion_factors.append(0)
 
-		sle.update({"in_qty": max(sle.actual_qty, 0), "out_qty": min(sle.actual_qty, 0)})
-		apply_secondary_qty_fields(sle)
+    actual_qty = stock_value = 0
 
-		if sle.serial_no:
-			update_available_serial_nos(available_serial_nos, sle)
+    if opening_row:
+        actual_qty = opening_row.get("qty_after_transaction")
+        stock_value = opening_row.get("stock_value")
 
-		if sle.actual_qty:
-			sle["in_out_rate"] = flt(sle.stock_value_difference / sle.actual_qty, precision)
+    available_serial_nos = {}
+    inventory_dimension_filters_applied = check_inventory_dimension_filters_applied(filters)
 
-		elif sle.voucher_type == "Stock Reconciliation":
-			sle["in_out_rate"] = sle.valuation_rate
+    batch_balance_dict = frappe._dict({})
 
-		data.append(sle)
+    if actual_qty and filters.get("batch_no"):
+        batch_balance_dict[filters.batch_no] = [actual_qty, stock_value]
 
-		if include_uom:
-			conversion_factors.append(item_detail.conversion_factor)
+    # =============================
+    # MAIN STOCK LEDGER LOOP
+    # =============================
+    for sle in sl_entries:
 
-	update_included_uom_in_report(columns, data, include_uom, conversion_factors)
-	return columns, data
+        item_detail = item_details[sle.item_code]
+        sle.update(item_detail)
 
+        if bundle_info := bundle_details.get(sle.serial_and_batch_bundle):
+            data.extend(
+                get_segregated_bundle_entries(
+                    sle, bundle_info, batch_balance_dict, filters, item_detail
+                )
+            )
+            continue
+
+        if filters.get("batch_no") or inventory_dimension_filters_applied:
+            actual_qty += flt(sle.actual_qty, precision)
+            stock_value += sle.stock_value_difference
+
+            if sle.batch_no:
+                if not batch_balance_dict.get(sle.batch_no):
+                    batch_balance_dict[sle.batch_no] = [0, 0]
+
+                batch_balance_dict[sle.batch_no][0] += sle.actual_qty
+                batch_balance_dict[sle.batch_no][1] += stock_value
+
+            if filters.get("segregate_serial_batch_bundle"):
+                actual_qty = batch_balance_dict[sle.batch_no][0]
+
+            if sle.voucher_type == "Stock Reconciliation" and not sle.actual_qty:
+                actual_qty = sle.qty_after_transaction
+                stock_value = sle.stock_value
+
+            sle.update(
+                {
+                    "qty_after_transaction": actual_qty,
+                    "stock_value": stock_value,
+                }
+            )
+
+        sle.update(
+            {
+                "in_qty": max(sle.actual_qty, 0),
+                "out_qty": min(sle.actual_qty, 0),
+            }
+        )
+
+        # =============================
+        # SECONDARY UOM CALCULATION
+        # =============================
+        key = (
+            sle.item_code,
+            sle.warehouse,
+            sle.voucher_type,
+            sle.voucher_no,
+        )
+
+        secondary_qty = secondary_map.get(key, 0)
+
+        sle["secondary_in_qty"] = max(secondary_qty, 0)
+        sle["secondary_out_qty"] = min(secondary_qty, 0)
+
+        secondary_balance += secondary_qty
+
+        sle["secondary_qty_after_transaction"] = secondary_balance
+        # =============================
+
+        if sle.serial_no:
+            update_available_serial_nos(available_serial_nos, sle)
+
+        if sle.actual_qty:
+            sle["in_out_rate"] = flt(
+                sle.stock_value_difference / sle.actual_qty, precision
+            )
+
+        elif sle.voucher_type == "Stock Reconciliation":
+            sle["in_out_rate"] = sle.valuation_rate
+
+        data.append(sle)
+
+        if include_uom:
+            conversion_factors.append(item_detail.conversion_factor)
+
+    update_included_uom_in_report(columns, data, include_uom, conversion_factors)
+
+    return columns, data
 
 def get_segregated_bundle_entries(sle, bundle_details, batch_balance_dict, filters, item_detail):
 	segregated_entries = []
@@ -407,6 +463,39 @@ def get_columns(filters):
 
 	return columns
 
+def get_secondary_uom_entries(filters):
+    sle = frappe.qb.DocType("Secondary UOM Ledger Entry")
+
+    query = (
+        frappe.qb.from_(sle)
+        .select(
+            sle.item_code,
+            sle.warehouse,
+            sle.voucher_type,
+            sle.voucher_no,
+            sle.posting_date,
+            sle.posting_time,
+            sle.actual_qty,
+        )
+        .where(sle.docstatus < 2)
+    )
+
+    return query.run(as_dict=True)
+
+def get_secondary_qty_map(entries):
+    sec_map = {}
+
+    for row in entries:
+        key = (
+            row.item_code,
+            row.warehouse,
+            row.voucher_type,
+            row.voucher_no,
+        )
+
+        sec_map[key] = sec_map.get(key, 0) + row.actual_qty
+
+    return sec_map
 
 def get_stock_ledger_entries(filters, items):
 	from_date = get_datetime(filters.from_date + " 00:00:00")
@@ -581,7 +670,7 @@ def apply_secondary_qty_fields(row):
 		row["secondary_qty_after_transaction"] = 0
 		return
 
-	row["secondary_in_qty"] = flt(row.get("in_qty")) / factor
+	row["secondary_in_qty"] = flt(row.get("actual_qty")) / factor
 	row["secondary_out_qty"] = flt(row.get("out_qty")) / factor
 	row["secondary_qty_after_transaction"] = flt(row.get("qty_after_transaction")) / factor
 
