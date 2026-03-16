@@ -344,11 +344,27 @@ function patch_update_child_items_for_so(frm) {
             },
             {
                 fieldtype: "Currency",
-                fieldname:  "price_list_rate",
+                fieldname: "price_list_rate",
                 options: "currency",
                 in_list_view: 1,
                 label: __("Price List Rate"),
                 precision: get_precision("price_list_rate"),
+                onchange: function () {
+
+                    const me = this;
+
+                    const row = dialog.fields_dict.trans_items.df.data.find(
+                        (r) => r.name === me.doc.name
+                    );
+
+                    if (!row) return;
+
+                    let discount = flt(row.discount_percentage || 0);
+
+                    row.rate = flt(me.value) * (1 - discount / 100);
+
+                    dialog.fields_dict.trans_items.grid.refresh();
+                }
             },
             {
                 fieldtype: "Percent",
@@ -356,6 +372,23 @@ function patch_update_child_items_for_so(frm) {
                 in_list_view: 1,
                 label: __("Discount %"),
                 precision: get_precision("discount_percentage"),
+                onchange: function () {
+
+                    const me = this;
+
+                    const row = dialog.fields_dict.trans_items.df.data.find(
+                        (r) => r.name === me.doc.name
+                    );
+
+                    if (!row) return;
+
+                    let rate = flt(row.price_list_rate || 0);
+                    let discount = flt(me.value || 0);
+
+                    row.rate = rate * (1 - discount / 100);
+
+                    dialog.fields_dict.trans_items.grid.refresh();
+                }
             },
             {
                 fieldtype: "Link",
@@ -451,29 +484,81 @@ function patch_update_child_items_for_so(frm) {
                     this.update_items();
                 }
             },
-            update_items: function () {
-                const trans_items = this.get_values()["trans_items"]
-                    .filter(item => !!item.item_code);
-                trans_items.forEach(row => {
-                    row.rate = flt(row.price_list_rate || 0);
-                    
-                });
+            // update_items: function () {
+            //     const trans_items = this.get_values()["trans_items"]
+            //         .filter(item => !!item.item_code);
+            //         trans_items.forEach(row => {
 
-                frappe.call({
-                    method: "erpnext.controllers.accounts_controller.update_child_qty_rate",
-                    freeze: true,
-                    args: {
-                        parent_doctype: frm.doc.doctype,
-                        trans_items: trans_items,
-                        parent_doctype_name: frm.doc.name,
-                        child_docname: child_docname,
-                    },
-                    callback: function () {
-                        frm.reload_doc();
-                    },
-                });
-                this.hide();
-            },
+            //         // ERPNext pricing fields
+            //         row.rate = flt(row.price_list_rate || 0);
+            //         row.price_list_rate = flt(row.price_list_rate || 0);
+            //         row.discount_percentage = flt(row.discount_percentage || 0);
+
+            //         // ensure qty precision
+            //         row.qty = flt(row.qty || 0);
+            //         row.conversion_factor = flt(row.conversion_factor || 1);
+
+            //         // secondary fields
+            //         row.secondary_qty = flt(row.secondary_qty || 0);
+            //         row.secondary_conversion_factor = flt(row.secondary_conversion_factor || 0);
+
+            //     });
+            //     // trans_items.forEach(row => {
+            //     //     row.rate = flt(row.price_list_rate || 0);
+                    
+            //     // });
+
+            //     frappe.call({
+            //         method: "erpnext.controllers.accounts_controller.update_child_qty_rate",
+            //         freeze: true,
+            //         args: {
+            //             parent_doctype: frm.doc.doctype,
+            //             trans_items: trans_items,
+            //             parent_doctype_name: frm.doc.name,
+            //             child_docname: child_docname,
+            //         },
+            //         callback: function () {
+            //             frm.reload_doc();
+            //         },
+            //     });
+            //     this.hide();
+            // },
+            update_items: function () {
+
+            const trans_items = this.get_values()["trans_items"]
+                .filter(item => !!item.item_code);
+
+            trans_items.forEach(row => {
+
+                let price = flt(row.price_list_rate || 0);
+                let discount = flt(row.discount_percentage || 0);
+
+                row.rate = price * (1 - discount / 100);
+
+                row.qty = flt(row.qty || 0);
+                row.conversion_factor = flt(row.conversion_factor || 1);
+
+                row.secondary_qty = flt(row.secondary_qty || 0);
+                row.secondary_conversion_factor = flt(row.secondary_conversion_factor || 0);
+
+            });
+
+            frappe.call({
+                method: "erpnext.controllers.accounts_controller.update_child_qty_rate",
+                freeze: true,
+                args: {
+                    parent_doctype: frm.doc.doctype,
+                    trans_items: trans_items,
+                    parent_doctype_name: frm.doc.name,
+                    child_docname: child_docname,
+                },
+                callback: function () {
+                    frm.reload_doc();
+                },
+            });
+
+            this.hide();
+        },
             primary_action_label: __("Update"),
         });
 

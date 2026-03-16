@@ -4,32 +4,49 @@ from frappe.utils import nowtime, flt
 
 
 def create_secondary_sle(doc, method):
-    #  Run only for Material Receipt
-    if doc.doctype != "Stock Entry" or doc.stock_entry_type != "Material Receipt":
+    if doc.doctype != "Stock Entry":
         return
 
     for item in doc.items:
         if not (item.secondary_uom and item.secondary_qty):
             continue
 
-        sle = frappe.new_doc("Secondary UOM Ledger Entry")
-        sle.item_code = item.item_code
-        sle.warehouse = item.t_warehouse or item.s_warehouse
-        sle.posting_date = doc.posting_date
-        sle.posting_time = doc.posting_time or nowtime()
+        for warehouse, actual_qty in get_secondary_stock_movements(item):
+            sle = frappe.new_doc("Secondary UOM Ledger Entry")
+            sle.item_code = item.item_code
+            sle.warehouse = warehouse
+            sle.posting_date = doc.posting_date
+            sle.posting_time = doc.posting_time or nowtime()
+            sle.voucher_type = doc.doctype
+            sle.voucher_no = doc.name
+            sle.actual_qty = actual_qty
+            sle.stock_uom = item.secondary_uom
+            sle.company = doc.company
+            sle.batch_no = getattr(item, "batch_no", None)
+            sle.insert(ignore_permissions=True)
+            sle.submit()
 
-        sle.voucher_type = doc.doctype
-        sle.voucher_no = doc.name
 
-        #  Material Receipt → Stock IN (+)
-        sle.actual_qty = abs(flt(item.secondary_qty))
+def get_secondary_stock_movements(item):
+    qty = abs(flt(item.secondary_qty))
+    if not qty:
+        return []
 
-        sle.stock_uom = item.secondary_uom
-        sle.company = doc.company
-        sle.batch_no = getattr(item, "batch_no", None)
+    movements = []
 
-        sle.insert(ignore_permissions=True)
-        sle.submit()
+    if item.s_warehouse:
+        movements.append((item.s_warehouse, -qty))
+
+    if item.t_warehouse:
+        movements.append((item.t_warehouse, qty))
+
+    # Fallback for unusual rows with no explicit source/target split.
+    if not movements:
+        warehouse = item.t_warehouse or item.s_warehouse
+        if warehouse:
+            movements.append((warehouse, qty))
+
+    return movements
 
 
 def calc_secondary_from_item(item, is_opening=False):

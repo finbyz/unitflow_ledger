@@ -10,13 +10,15 @@ from erpnext.controllers.accounts_controller import (
 def update_child_qty_rate(
     parent_doctype, trans_items, parent_doctype_name, child_docname="items"
 ):
-    """Override to also persist secondary_qty, secondary_uom, secondary_conversion_factor."""
-    # Call the original ERPNext function first
+    """Override to also persist secondary_qty, secondary_uom, secondary_conversion_factor
+    and recalculate all pricing, discount and taxes like standard ERPNext."""
+
+    # Run standard ERPNext update first
     _original_update_child_qty_rate(
         parent_doctype, trans_items, parent_doctype_name, child_docname
     )
 
-    # Only run secondary field update for Sales Order
+    # Only run custom logic for Sales Order
     if parent_doctype != "Sales Order":
         return
 
@@ -31,12 +33,11 @@ def update_child_qty_rate(
         docname = d.get("docname")
         item_code = d.get("item_code")
 
-        # Find the child item
         child_item = None
+
         if docname:
-            child_item = frappe.get_doc(parent_doctype + " Item", docname)
+            child_item = frappe.get_doc("Sales Order Item", docname)
         else:
-            # For newly added items, find by item_code in the freshly saved parent
             parent.reload()
             for item in parent.get(child_docname):
                 if item.item_code == item_code and not item.secondary_uom:
@@ -45,45 +46,49 @@ def update_child_qty_rate(
 
         if not child_item:
             continue
-
         secondary_uom = d.get("secondary_uom") or ""
         secondary_conversion_factor = flt(d.get("secondary_conversion_factor") or 0)
-        qty = flt(d.get("qty") or 0)
+        secondary_qty = flt(d.get("secondary_qty") or 0)
 
-        # Auto-calculate secondary_qty if conversion factor is available
+        qty = flt(d.get("qty") or 0)
+        rate = flt(d.get("rate") or 0)
+        price_list_rate = flt(d.get("price_list_rate") or 0)
+        discount_percentage = flt(d.get("discount_percentage") or 0)
+
+        # secondary_uom = d.get("secondary_uom") or ""
+        # secondary_conversion_factor = flt(d.get("secondary_conversion_factor") or 0)
+        # qty = flt(d.get("qty") or 0)
+
+        # Calculate secondary qty
         if secondary_conversion_factor:
             secondary_qty = qty / secondary_conversion_factor
-        elif secondary_uom:
-            # Look up the conversion factor from the item
-            item_doc = frappe.get_cached_doc("Item", item_code)
-            sec_row = next((u for u in item_doc.uoms if u.uom == secondary_uom), None)
-            if sec_row:
-                secondary_conversion_factor = flt(sec_row.conversion_factor)
-                secondary_qty = (
-                    qty / secondary_conversion_factor
-                    if secondary_conversion_factor
-                    else 0
-                )
-            else:
-                secondary_qty = 0
         else:
-            # Derive secondary UOM from item definition
-            item_doc = frappe.get_cached_doc("Item", item_code)
-            primary_uom = d.get("uom") or child_item.uom
-            sec_row = next((u for u in item_doc.uoms if u.uom != primary_uom), None)
-            if sec_row:
-                secondary_uom = sec_row.uom
-                secondary_conversion_factor = flt(sec_row.conversion_factor)
-                secondary_qty = (
-                    qty / secondary_conversion_factor
-                    if secondary_conversion_factor
-                    else 0
-                )
-            else:
-                secondary_qty = 0
+            secondary_qty = 0
 
         child_item.flags.ignore_validate_update_after_submit = True
+
+        child_item.qty = qty
+        child_item.rate = rate
+        child_item.price_list_rate = price_list_rate
+        child_item.discount_percentage = discount_percentage
+
         child_item.secondary_uom = secondary_uom
         child_item.secondary_conversion_factor = secondary_conversion_factor
         child_item.secondary_qty = secondary_qty
+
         child_item.save()
+
+    # ------------------------------
+    # Recalculate ERPNext pricing
+    # ------------------------------
+
+    parent.reload()
+
+    # runs price rules, rates etc
+    parent.set_missing_values()
+
+    # recalculates discount, taxes, totals
+    parent.calculate_taxes_and_totals()
+
+    parent.flags.ignore_validate_update_after_submit = True
+    parent.save()
