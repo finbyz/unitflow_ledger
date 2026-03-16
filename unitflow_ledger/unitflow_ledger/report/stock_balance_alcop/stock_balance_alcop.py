@@ -532,10 +532,18 @@ class StockBalanceAlcopReport:
                 query = query.where(item_table.item_group.isin(all_groups))
 
         if item_codes := self.filters.get("item_code"):
+    # Normalize MultiSelectList values
             if isinstance(item_codes, str):
-                item_codes = item_codes.split("\n")
-            query = query.where(item_table.name.isin(item_codes))
+                item_codes = frappe.parse_json(item_codes)
 
+            if isinstance(item_codes, list):
+                item_codes = [
+                    d.get("value") if isinstance(d, dict) else d
+                    for d in item_codes
+                ]
+
+            if item_codes:
+                query = query.where(item_table.name.isin(item_codes))
         if brand := self.filters.get("brand"):
             query = query.where(item_table.brand == brand)
 

@@ -47,9 +47,15 @@ frappe.query_reports["Stock Balance Alcop"] = {
 				let item_group = frappe.query_report.get_filter_value("item_group");
 
 				let filters = {
-					...(item_group && { item_group }),
 					is_stock_item: 1,
 				};
+
+				if (item_group && item_group.length) {
+					let values = item_group.map((d) => (typeof d === "object" ? d.value : d));
+					if (values.length) {
+						filters.item_group = ["in", values];
+					}
+				}
 
 				let { message: data } = await frappe.call({
 					method: "erpnext.controllers.queries.item_query",
