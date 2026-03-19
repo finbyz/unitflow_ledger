@@ -280,38 +280,71 @@ class StockBalanceAlcopReport:
         """Query Secondary UOM Ledger Entry summed by (item_code, warehouse)."""
         sule = frappe.qb.DocType("Secondary UOM Ledger Entry")
 
-        query = (
+        base_query = (
             frappe.qb.from_(sule)
-            .select(
+            .where((sule.docstatus < 2) & (sule.is_cancelled == 0))
+            .where(sule.item_code.isin(items))
+        )
+
+        if self.to_date:
+            base_query = base_query.where(sule.posting_date <= self.to_date)
+        if self.filters.get("company"):
+            base_query = base_query.where(sule.company == self.filters.get("company"))
+        base_query = apply_warehouse_filter(base_query, sule, self.filters)
+
+        # Total balance (all dates up to to_date)
+        total_rows = (
+            base_query.select(
                 sule.item_code,
                 sule.warehouse,
                 Sum(sule.actual_qty).as_("total_qty"),
                 sule.unit_of_measure,
             )
-            .where((sule.docstatus < 2) & (sule.is_cancelled == 0))
             .groupby(sule.item_code, sule.warehouse, sule.unit_of_measure)
+            .run(as_dict=True)
         )
 
-        # Apply same date filters
-        if self.to_date:
-            query = query.where(sule.posting_date <= self.to_date)
+        # In qty: positive actual_qty within from_date–to_date
+        in_rows = (
+            base_query.select(
+                sule.item_code,
+                sule.warehouse,
+                Sum(sule.actual_qty).as_("in_qty"),
+                sule.unit_of_measure,
+            )
+            .where(sule.actual_qty > 0)
+            .where(sule.posting_date >= self.from_date)
+            .where(sule.posting_date <= self.to_date)
+            .groupby(sule.item_code, sule.warehouse, sule.unit_of_measure)
+            .run(as_dict=True)
+        )
 
-        # Apply item filter
-        query = query.where(sule.item_code.isin(items))
+        # Out qty: negative actual_qty within from_date–to_date
+        out_rows = (
+            base_query.select(
+                sule.item_code,
+                sule.warehouse,
+                Sum(sule.actual_qty).as_("out_qty"),
+                sule.unit_of_measure,
+            )
+            .where(sule.actual_qty < 0)
+            .where(sule.posting_date >= self.from_date)
+            .where(sule.posting_date <= self.to_date)
+            .groupby(sule.item_code, sule.warehouse, sule.unit_of_measure)
+            .run(as_dict=True)
+        )
 
-        # Apply company filter
-        if self.filters.get("company"):
-            query = query.where(sule.company == self.filters.get("company"))
+        # Build in/out lookup dicts
+        in_map = {(r.item_code, r.warehouse): flt(r.in_qty) for r in in_rows}
+        out_map = {(r.item_code, r.warehouse): abs(flt(r.out_qty)) for r in out_rows}
 
-        # Apply warehouse filter
-        query = apply_warehouse_filter(query, sule, self.filters)
-
-        rows = query.run(as_dict=True)
-        for row in rows:
+        for row in total_rows:
             key = (row.item_code, row.warehouse)
             self.secondary_ledger_map[key] = {
                 "secondary_uom_qty": flt(row.total_qty),
                 "secondary_uom": row.unit_of_measure,
+                "secondary_in_qty": in_map.get(key, 0.0),
+                "secondary_out_qty": out_map.get(key, 0.0),
             }
 
     def prepare_new_data(self):
@@ -379,16 +412,20 @@ class StockBalanceAlcopReport:
             )
 
             # Apply secondary UOM data from ledger
+            # Replace the existing secondary UOM block in prepare_new_data:
             sec_key = (report_data.item_code, report_data.warehouse)
             if sec_data := self.secondary_ledger_map.get(sec_key):
                 report_data["secondary_uom_qty"] = sec_data["secondary_uom_qty"]
                 report_data["secondary_uom"] = sec_data["secondary_uom"]
+                report_data["secondary_in_qty"] = sec_data["secondary_in_qty"]
+                report_data["secondary_out_qty"] = sec_data["secondary_out_qty"]
             else:
-                # Fallback: show UOM name but 0 qty if no ledger entries
                 fallback = self.secondary_uom_fallback.get(report_data.item_code) or {}
                 report_data["secondary_uom_qty"] = 0
                 report_data["secondary_uom"] = fallback.get("uom", "")
-
+                report_data["secondary_in_qty"] = 0
+                report_data["secondary_out_qty"] = 0
+    
             if (
                 not self.filters.get("include_zero_stock_items")
                 and report_data
@@ -532,14 +569,13 @@ class StockBalanceAlcopReport:
                 query = query.where(item_table.item_group.isin(all_groups))
 
         if item_codes := self.filters.get("item_code"):
-    # Normalize MultiSelectList values
+            # Normalize MultiSelectList values
             if isinstance(item_codes, str):
                 item_codes = frappe.parse_json(item_codes)
 
             if isinstance(item_codes, list):
                 item_codes = [
-                    d.get("value") if isinstance(d, dict) else d
-                    for d in item_codes
+                    d.get("value") if isinstance(d, dict) else d for d in item_codes
                 ]
 
             if item_codes:
@@ -654,6 +690,12 @@ class StockBalanceAlcopReport:
                     "convertible": "qty",
                 },
                 {
+                    "label": _("Secondary In Qty"),
+                    "fieldname": "secondary_in_qty",
+                    "fieldtype": "Float",
+                    "width": 120,
+                },
+                {
                     "label": _("In Value"),
                     "fieldname": "in_val",
                     "fieldtype": "Float",
@@ -665,6 +707,12 @@ class StockBalanceAlcopReport:
                     "fieldtype": "Float",
                     "width": 80,
                     "convertible": "qty",
+                },
+                {
+                    "label": _("Secondary Out Qty"),
+                    "fieldname": "secondary_out_qty",
+                    "fieldtype": "Float",
+                    "width": 120,
                 },
                 {
                     "label": _("Out Value"),
