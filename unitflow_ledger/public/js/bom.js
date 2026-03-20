@@ -1,11 +1,11 @@
 const bom_item_doc_cache = {};
 
 frappe.ui.form.on("BOM", {
-    refresh(frm) {
-        setTimeout(() => {
-            recalculate_bom_rows(frm);
-        }, 500);
-    },
+    // refresh(frm) {
+    //     setTimeout(() => {
+    //         recalculate_bom_rows(frm);
+    //     }, 500);
+    // },
 
     after_save(frm) {
         recalculate_bom_rows(frm);
