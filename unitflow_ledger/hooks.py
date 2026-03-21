@@ -235,7 +235,9 @@ doc_events = {
 # ------------------------------
 #
 override_whitelisted_methods = {
-    "erpnext.controllers.accounts_controller.update_child_qty_rate": "unitflow_ledger.doc_events.update_child_qty_rate.update_child_qty_rate"
+    "erpnext.controllers.accounts_controller.update_child_qty_rate": "unitflow_ledger.doc_events.update_child_qty_rate.update_child_qty_rate",
+    "erpnext.manufacturing.doctype.work_order.work_order.make_stock_entry": "unitflow_ledger.doc_events.work_order.custom_make_stock_entry",
+
 }
 #
 # each overriding function accepts a `data` argument;
