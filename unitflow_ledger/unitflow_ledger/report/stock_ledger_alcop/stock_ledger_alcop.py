@@ -662,17 +662,19 @@ def get_item_details(items, sl_entries, include_uom):
 
 
 def apply_secondary_qty_fields(row):
-	factor = flt(row.get("secondary_conversion_factor"))
+    factor = flt(row.get("secondary_conversion_factor"))
 
-	if not factor:
-		row["secondary_in_qty"] = 0
-		row["secondary_out_qty"] = 0
-		row["secondary_qty_after_transaction"] = 0
-		return
+    if not factor:
+        row["secondary_in_qty"] = 0
+        row["secondary_out_qty"] = 0
+        row["secondary_qty_after_transaction"] = 0
+        return
 
-	row["secondary_in_qty"] = flt(row.get("actual_qty")) / factor
-	row["secondary_out_qty"] = flt(row.get("out_qty")) / factor
-	row["secondary_qty_after_transaction"] = flt(row.get("qty_after_transaction")) / factor
+    actual_qty = flt(row.get("actual_qty"))
+
+    row["secondary_in_qty"] = max(actual_qty, 0) / factor
+    row["secondary_out_qty"] = min(actual_qty, 0) / factor
+    row["secondary_qty_after_transaction"] = flt(row.get("qty_after_transaction")) / factor
 
 
 # TODO: THIS IS NOT USED
