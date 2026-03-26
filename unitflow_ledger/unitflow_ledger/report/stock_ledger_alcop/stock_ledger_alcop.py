@@ -140,8 +140,12 @@ def execute(filters=None):
             sle.voucher_no,
         )
 
-        secondary_qty = secondary_map.get(key, 0)
+        secondary_list = secondary_map.get(key, [])
 
+        if secondary_list:
+            secondary_qty = secondary_list.pop(0)   # 🔥 consume row-wise
+        else:
+            secondary_qty = 0
         sle["secondary_in_qty"] = max(secondary_qty, 0)
         sle["secondary_out_qty"] = min(secondary_qty, 0)
 
@@ -478,12 +482,13 @@ def get_secondary_uom_entries(filters):
             sle.actual_qty,
         )
         .where(sle.docstatus < 2)
+        .where(sle.is_cancelled == 0)
     )
 
     return query.run(as_dict=True)
 
 def get_secondary_qty_map(entries):
-    sec_map = {}
+    sec_map = defaultdict(list)
 
     for row in entries:
         key = (
@@ -492,8 +497,7 @@ def get_secondary_qty_map(entries):
             row.voucher_type,
             row.voucher_no,
         )
-
-        sec_map[key] = sec_map.get(key, 0) + row.actual_qty
+        sec_map[key].append(row.actual_qty)
 
     return sec_map
 
