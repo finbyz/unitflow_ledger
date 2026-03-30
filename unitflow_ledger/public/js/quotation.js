@@ -1,26 +1,24 @@
 let quot_updating = false;
 
 frappe.ui.form.on("Quotation Item", {
-
     item_code(frm, cdt, cdn) {
         set_quot_secondary_fields(frm, cdt, cdn);
     },
-
     qty(frm, cdt, cdn) {
         quot_update_from_primary(frm, cdt, cdn);
     },
-
     secondary_uom(frm, cdt, cdn) {
         quot_update_from_primary(frm, cdt, cdn);
     },
-
     secondary_qty(frm, cdt, cdn) {
         quot_update_from_secondary(frm, cdt, cdn);
     },
-
     secondary_conversion_factor(frm, cdt, cdn) {
         if (quot_updating) return;
         quot_update_on_factor_change(frm, cdt, cdn);
+    },
+    form_render(frm, cdt, cdn) {
+        set_quot_secondary_fields_read_only(frm, cdt, cdn);
     }
 });
 
@@ -30,15 +28,11 @@ function set_quot_secondary_fields(frm, cdt, cdn) {
 
     frappe.call({
         method: "frappe.client.get",
-        args: {
-            doctype: "Item",
-            name: row.item_code
-        },
+        args: { doctype: "Item", name: row.item_code },
         callback(r) {
             if (!r.message) return;
 
             let item = r.message;
-
             let sec = item.uoms.find(u => u.uom !== item.stock_uom);
             if (!sec) return;
 
@@ -47,7 +41,7 @@ function set_quot_secondary_fields(frm, cdt, cdn) {
             frappe.model.set_value(cdt, cdn, "secondary_uom", sec.uom);
             frappe.model.set_value(cdt, cdn, "secondary_conversion_factor", sec.conversion_factor);
 
-            let qty = (row.qty === null || row.qty === undefined || row.qty === 0) ? 1 : row.qty;
+            let qty = (!row.qty) ? 1 : row.qty;
             frappe.model.set_value(cdt, cdn, "secondary_qty", qty / sec.conversion_factor);
 
             quot_updating = false;
@@ -60,25 +54,12 @@ function quot_update_from_primary(frm, cdt, cdn) {
     quot_updating = true;
 
     let row = locals[cdt][cdn];
-
-    if (!row.item_code || row.qty == null) {
-        quot_updating = false;
-        return;
-    }
+    if (!row.item_code || row.qty == null) { quot_updating = false; return; }
 
     let factor = row.secondary_conversion_factor;
-    if (!factor) {
-        quot_updating = false;
-        return;
-    }
+    if (!factor) { quot_updating = false; return; }
 
-    frappe.model.set_value(
-        cdt,
-        cdn,
-        "secondary_qty",
-        row.qty / factor
-    );
-
+    frappe.model.set_value(cdt, cdn, "secondary_qty", row.qty / factor);
     quot_updating = false;
 }
 
@@ -87,25 +68,12 @@ function quot_update_from_secondary(frm, cdt, cdn) {
     quot_updating = true;
 
     let row = locals[cdt][cdn];
-
-    if (!row.item_code || row.secondary_qty == null) {
-        quot_updating = false;
-        return;
-    }
+    if (!row.item_code || row.secondary_qty == null) { quot_updating = false; return; }
 
     let factor = row.secondary_conversion_factor;
-    if (!factor) {
-        quot_updating = false;
-        return;
-    }
+    if (!factor) { quot_updating = false; return; }
 
-    frappe.model.set_value(
-        cdt,
-        cdn,
-        "qty",
-        row.secondary_qty * factor
-    );
-
+    frappe.model.set_value(cdt, cdn, "qty", row.secondary_qty * factor);
     quot_updating = false;
 }
 
@@ -115,25 +83,39 @@ function quot_update_on_factor_change(frm, cdt, cdn) {
 
     let r = locals[cdt][cdn];
     let factor = r.secondary_conversion_factor;
-
-    if (!factor) {
-        quot_updating = false;
-        return;
-    }
+    if (!factor) { quot_updating = false; return; }
 
     if (r.qty != null) {
-        frappe.model.set_value(
-            cdt, cdn,
-            "secondary_qty",
-            r.qty / factor
-        );
+        frappe.model.set_value(cdt, cdn, "secondary_qty", r.qty / factor);
     } else if (r.secondary_qty != null) {
-        frappe.model.set_value(
-            cdt, cdn,
-            "qty",
-            r.secondary_qty * factor
-        );
+        frappe.model.set_value(cdt, cdn, "qty", r.secondary_qty * factor);
     }
 
     quot_updating = false;
+}
+
+frappe.ui.form.on("Quotation", {
+    refresh(frm) {
+        set_quot_secondary_fields_read_only(frm);
+    },
+    onload(frm) {
+        set_quot_secondary_fields_read_only(frm);
+    }
+});
+
+function set_quot_secondary_fields_read_only(frm, cdt, cdn) {
+    // Only allow users with "Quotation Manager" role
+    const has_role = frappe.user_roles.includes("Quotation Manager");
+
+    if (!has_role) {
+        if (cdt && cdn) {
+            // Disable for specific row in the child table dialog
+            frm.fields_dict["items"].grid.grid_rows_by_docname[cdn]
+                .toggle_enable("secondary_conversion_factor", false);
+        } else {
+            // Disable entire column in the grid
+            frm.fields_dict["items"].grid.toggle_enable("secondary_conversion_factor", false);
+            frm.refresh_field("items");
+        }
+    }
 }
