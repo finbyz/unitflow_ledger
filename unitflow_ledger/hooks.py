@@ -59,6 +59,7 @@ doctype_js = {
     "Sales Invoice": "public/js/sales_invoice.js",
     "Purchase Invoice": "public/js/purchase_invoice.js",
     "Stock Entry": "public/js/stock_entry.js",
+    "Stock Reconciliation": "public/js/stock_reconciliation.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -193,6 +194,11 @@ doc_events = {
         "on_submit": "unitflow_ledger.doc_events.stock_entry.create_secondary_sle",
         "validate": "unitflow_ledger.doc_events.stock_entry.populate_secondary",
         
+    },
+    "Stock Reconciliation": {
+        "validate": "unitflow_ledger.doc_events.stock_reconciliation.before_save",
+        "before_save": "unitflow_ledger.doc_events.stock_reconciliation.before_save",
+        "on_update": "unitflow_ledger.doc_events.stock_reconciliation.on_update",
     },
 }
 
