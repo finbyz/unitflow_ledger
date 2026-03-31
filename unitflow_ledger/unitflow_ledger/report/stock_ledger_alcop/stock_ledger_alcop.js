@@ -121,7 +121,7 @@ frappe.query_reports["Stock Ledger Alcop"] = {
 			fieldname: "segregate_serial_batch_bundle",
 			label: __("Segregate Serial / Batch Bundle"),
 			fieldtype: "Check",
-			default: 0,
+			default: 1,
 		},
 	],
 	formatter: function (value, row, column, data, default_formatter) {
