@@ -1,5 +1,40 @@
 let updating = false;
 
+frappe.ui.form.on('Stock Reconciliation', {
+    refresh: function(frm) {
+        if (!frm.is_new()) {
+            frm.add_custom_button(__('Stock Ledger Alcop'), function() {
+
+                let items = [];
+                let warehouses = [];
+
+                // Collect items from child table
+                (frm.doc.items || []).forEach(row => {
+                    if (row.item_code) {
+                        items.push(row.item_code);
+                    }
+                    if (row.warehouse) {
+                        warehouses.push(row.warehouse);
+                    }
+                });
+
+                // Remove duplicates
+                items = [...new Set(items)];
+                warehouses = [...new Set(warehouses)];
+
+                frappe.set_route('query-report', 'Stock Ledger Alcop', {
+                    company: frm.doc.company,
+                    from_date: frm.doc.posting_date,
+                    to_date: frappe.datetime.get_today(),
+                    item_code: items.length === 1 ? items[0] : items,
+                    warehouse: warehouses.length === 1 ? warehouses[0] : warehouses
+                });
+
+            }, __('View'));
+        }
+    }
+});
+
 frappe.ui.form.on("Stock Reconciliation Item", {
 
     item_code(frm, cdt, cdn) {
