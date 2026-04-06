@@ -144,6 +144,7 @@ def execute(filters=None):
             sle.warehouse,
             sle.voucher_type,
             sle.voucher_no,
+            sle.get("serial_and_batch_bundle") or "",
         )
 
         secondary_list = secondary_map.get(key, [])
@@ -181,6 +182,60 @@ def execute(filters=None):
     return columns, data
 
 
+
+# def get_segregated_bundle_entries(
+#     sle, bundle_details, batch_balance_dict, filters, item_detail
+# ):
+#     segregated_entries = []
+#     qty_before_transaction = sle.qty_after_transaction - sle.actual_qty
+#     stock_value_before_transaction = sle.stock_value - sle.stock_value_difference
+
+#     for row in bundle_details:
+#         new_sle = copy.deepcopy(sle)
+#         new_sle.update(row)
+#         new_sle.update(item_detail)
+#         new_sle.update(
+#             {
+#                 "in_out_rate": (
+#                     flt(new_sle.stock_value_difference / row.qty) if row.qty else 0
+#                 ),
+#                 "in_qty": row.qty if row.qty > 0 else 0,
+#                 "out_qty": row.qty if row.qty < 0 else 0,
+#                 "qty_after_transaction": qty_before_transaction + row.qty,
+#                 "stock_value": stock_value_before_transaction
+#                 + new_sle.stock_value_difference,
+#                 "incoming_rate": row.incoming_rate if row.qty > 0 else 0,
+#             }
+#         )
+
+#         if filters.get("batch_no") and row.batch_no:
+#             if not batch_balance_dict.get(row.batch_no):
+#                 batch_balance_dict[row.batch_no] = [0, 0]
+
+#             batch_balance_dict[row.batch_no][0] += row.qty
+#             batch_balance_dict[row.batch_no][1] += row.stock_value_difference
+
+#             new_sle.update(
+#                 {
+#                     "qty_after_transaction": batch_balance_dict[row.batch_no][0],
+#                     "stock_value": batch_balance_dict[row.batch_no][1],
+#                 }
+#             )
+
+#         qty_before_transaction += row.qty
+#         stock_value_before_transaction += new_sle.stock_value_difference
+
+#         new_sle.valuation_rate = (
+#             stock_value_before_transaction / qty_before_transaction
+#             if qty_before_transaction
+#             else 0
+#         )
+#         apply_secondary_qty_fields(new_sle)
+
+#         segregated_entries.append(new_sle)
+
+#     return segregated_entries
+
 def get_segregated_bundle_entries(
     sle, bundle_details, batch_balance_dict, filters, item_detail
 ):
@@ -192,6 +247,11 @@ def get_segregated_bundle_entries(
         new_sle = copy.deepcopy(sle)
         new_sle.update(row)
         new_sle.update(item_detail)
+
+        # ←←← THIS IS THE FIX
+        new_sle["actual_qty"] = flt(row.get("qty", 0))
+        # ←←←
+
         new_sle.update(
             {
                 "in_out_rate": (
@@ -512,9 +572,10 @@ def get_secondary_uom_entries(filters):
             sle.warehouse,
             sle.voucher_type,
             sle.voucher_no,
+            sle.actual_qty,
             sle.posting_date,
             sle.posting_time,
-            sle.actual_qty,
+            sle.creation, 
         )
         .where(sle.docstatus < 2)
         .where(sle.is_cancelled == 0)
@@ -525,8 +586,9 @@ def get_secondary_uom_entries(filters):
 
 def get_secondary_qty_map(entries):
     sec_map = defaultdict(list)
+    sorted_entries = sorted(entries, key=lambda x: (x.posting_date, x.posting_time))
 
-    for row in entries:
+    for row in sorted_entries:
         key = (
             row.item_code,
             row.warehouse,
@@ -726,7 +788,7 @@ def apply_secondary_qty_fields(row):
     actual_qty = flt(row.get("actual_qty"))
 
     row["secondary_in_qty"] = max(actual_qty, 0) / factor
-    row["secondary_out_qty"] = min(actual_qty, 0) / factor
+    row["secondary_out_qty"] = min(actual_qty , 0) / factor
     row["secondary_qty_after_transaction"] = (
         flt(row.get("qty_after_transaction")) / factor
     )
