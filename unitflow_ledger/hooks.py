@@ -182,6 +182,7 @@ doc_events = {
         "on_submit": "unitflow_ledger.doc_events.purchase_invoice.create_secondary_sle",
     },
     "Delivery Note": {
+        "validate": "unitflow_ledger.doc_events.secondary_qty_cal.before_save",
         "before_cancel": "unitflow_ledger.doc_events.cancel_su_sle.before_cancel",
         "on_submit": "unitflow_ledger.doc_events.delivery_note.create_secondary_sle",
     },

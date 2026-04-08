@@ -59,6 +59,15 @@ def secondary_uom_calc(doc, child_table_field, qty_field, primary_uom_field):
         conversion_factor = flt(secondary_row.conversion_factor)
         quantity = flt(getattr(item, qty_field, 0))
 
+        # For Sales Order: the JS handles live recalculation when the user manually
+        # changes secondary_conversion_factor. If the saved factor differs from the
+        # Item master value, the user overrode it — skip the standard formula so we
+        # don't clobber their input on before_save / on_update.
+        if doc.doctype == "Sales Order":
+            existing_factor = flt(item.get("secondary_conversion_factor"))
+            if existing_factor and existing_factor != conversion_factor:
+                continue
+
         item.secondary_uom = secondary_row.uom
         item.secondary_conversion_factor = conversion_factor
         # conversion_factor is in stock-uom terms, so secondary qty is qty / factor.
