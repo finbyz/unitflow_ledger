@@ -87,13 +87,41 @@ filters: [
 				return options;
 			},
 		},
+
+		{
+            fieldname: "customer",
+            label: "Customer",
+            fieldtype: "MultiSelectList",
+            options: "Customer",
+            get_data: function(txt) {
+                return frappe.db.get_link_options("Customer", txt);
+            }
+        },
+		
 		{
 			fieldname: "group_by_so",
 			label: __("Group by Sales Order"),
 			fieldtype: "Check",
 			default: 0,
 		},
+
+		{
+            fieldname: "filter_by_delay",
+            label: "Filter by Delay",
+            fieldtype: "Check",
+        },
+        {
+            fieldname: "delay_days",
+            label: "Delay (Days)",
+            fieldtype: "Int",
+            depends_on: "eval:doc.filter_by_delay == 1"
+        }
 	],
+
+	after_refresh: function() {
+		last_sales_order_for_color = null;
+		sales_order_color_band = 0;
+	},
 
 	formatter: function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
@@ -108,11 +136,6 @@ filters: [
 		}
 
 		if (data) {
-			if (row === 0 && column.fieldname === "date") {
-				last_sales_order_for_color = null;
-				sales_order_color_band = 0;
-			}
-
 			if (data.__sales_order_color_band === undefined) {
 				const current_sales_order = data.sales_order || "";
 				if (current_sales_order !== last_sales_order_for_color) {

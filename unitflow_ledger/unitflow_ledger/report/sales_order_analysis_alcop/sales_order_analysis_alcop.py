@@ -524,7 +524,11 @@ def validate_filters(filters):
 
 
 def get_conditions(filters):
-    conditions = ""
+    conditions = ""   
+    
+    if filters.get("customer"):
+        conditions += " and so.customer in %(customer)s"
+        
     if filters.get("from_date") and filters.get("to_date"):
         conditions += " and so.transaction_date between %(from_date)s and %(to_date)s"
 
@@ -539,6 +543,11 @@ def get_conditions(filters):
 
     if filters.get("warehouse"):
         conditions += " and soi.warehouse = %(warehouse)s"
+        
+    if filters.get("delay_days"):
+        conditions += """
+            and DATEDIFF(CURRENT_DATE, soi.delivery_date) BETWEEN 1 AND %(delay_days)s
+        """
 
     return conditions
 
@@ -552,6 +561,7 @@ def get_data(conditions, filters):
 			so.name as sales_order,
 			so.status, so.customer, soi.item_code,
 			MAX(sii.parent) as sales_invoice,
+            MAX(si.posting_date) as invoice_date,
 			(
 				SELECT st.name
 				FROM `tabSales Team` st
@@ -589,13 +599,15 @@ def get_data(conditions, filters):
 			`tabSales Order Item` soi
 		LEFT JOIN `tabSales Invoice Item` sii
 			ON sii.so_detail = soi.name and sii.docstatus = 1
+        LEFT JOIN `tabSales Invoice` si
+            ON si.name = sii.parent AND si.docstatus = 1
 		WHERE
 			soi.parent = so.name
 			and so.status not in ('Stopped', 'On Hold')
 			and so.docstatus = 1
 			{conditions}
 		GROUP BY soi.name
-		ORDER BY so.transaction_date ASC, soi.item_code ASC
+		ORDER BY so.name ASC, soi.item_code ASC
 	""",
         filters,
         as_dict=1,
@@ -763,6 +775,13 @@ def get_columns(filters):
             "options": "Sales Invoice",
             "width": 160,
         },
+        
+        {
+            "label": _("Invoice Date"),
+            "fieldname": "invoice_date",
+            "fieldtype": "Date",
+            "width": 120,
+        },
         {
             "label": _("Status"),
             "fieldname": "status",
@@ -774,7 +793,7 @@ def get_columns(filters):
             "fieldname": "customer",
             "fieldtype": "Link",
             "options": "Customer",
-            "width": 130,
+            "width": 200,
         },
     ]
 
@@ -785,7 +804,7 @@ def get_columns(filters):
                 "fieldname": "item_code",
                 "fieldtype": "Link",
                 "options": "Item",
-                "width": 100,
+                "width": 280,
             }
         )
         columns.append(
@@ -793,7 +812,7 @@ def get_columns(filters):
                 "label": _("Description"),
                 "fieldname": "description",
                 "fieldtype": "Small Text",
-                "width": 100,
+                "width": 170,
             }
         )
 
@@ -977,7 +996,7 @@ def get_columns(filters):
                 "fieldname": "warehouse",
                 "fieldtype": "Link",
                 "options": "Warehouse",
-                "width": 100,
+                "width": 130,
             }
         )
     columns.append(
@@ -986,7 +1005,7 @@ def get_columns(filters):
             "fieldname": "company",
             "fieldtype": "Link",
             "options": "Company",
-            "width": 100,
+            "width": 200,
         }
     )
 

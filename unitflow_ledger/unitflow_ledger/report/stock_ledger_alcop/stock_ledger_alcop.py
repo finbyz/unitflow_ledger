@@ -1239,11 +1239,11 @@ def execute(filters=None):
     if not use_conversion_factor:
         secondary_entries = get_secondary_uom_entries(filters)
         secondary_map = get_secondary_qty_map(secondary_entries)
+        secondary_balance = get_secondary_opening_balance(filters)
     else:
         secondary_map = {}
+        secondary_balance = 0
     # ----------------------------
-
-    secondary_balance = 0
 
     item_details = get_item_details(items, sl_entries, include_uom)
 
@@ -1268,7 +1268,7 @@ def execute(filters=None):
                 "secondary_uom": None,
                 "secondary_in_qty": 0,
                 "secondary_out_qty": 0,
-                "secondary_qty_after_transaction": 0,
+                "secondary_qty_after_transaction": secondary_balance,
             }
         )
 
@@ -1835,6 +1835,42 @@ def get_secondary_uom_entries(filters):
         query = query.where(sle.posting_date <= filters.to_date)
 
     return query.run(as_dict=True)
+
+
+def get_secondary_opening_balance(filters):
+    """
+    Sum all Secondary UOM Ledger Entry actual_qty records strictly before
+    from_date to compute the correct opening secondary balance when a date
+    range filter is applied.
+    """
+    if not filters.get("from_date"):
+        return 0.0
+
+    sle = frappe.qb.DocType("Secondary UOM Ledger Entry")
+
+    query = (
+        frappe.qb.from_(sle)
+        .select(Sum(sle.actual_qty).as_("opening_qty"))
+        .where(sle.docstatus < 2)
+        .where(sle.is_cancelled == 0)
+        .where(sle.posting_date < filters.from_date)
+    )
+
+    if item_codes := filters.get("item_code"):
+        query = query.where(
+            sle.item_code.isin(item_codes)
+            if isinstance(item_codes, list)
+            else sle.item_code == item_codes
+        )
+
+    if warehouses := filters.get("warehouse"):
+        if isinstance(warehouses, list) and warehouses:
+            query = query.where(sle.warehouse.isin(warehouses))
+        else:
+            query = query.where(sle.warehouse == warehouses)
+
+    result = query.run(as_dict=True)
+    return flt(result[0].opening_qty) if result and result[0].opening_qty else 0.0
 
 
 def get_secondary_qty_map(entries):

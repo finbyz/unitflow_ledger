@@ -272,13 +272,7 @@ frappe.query_reports["Stock Ledger Alcop"] = {
 			fieldtype: "Check",
 			default: 1,
 		},
-		{
-			fieldname: "report_on_conversion_factor",
-			label: __("Report on Conversion Factor"),
-			fieldtype: "Check",
-			default: 0,
-			description: __("If checked, secondary UOM quantities are calculated from the item conversion factor instead of the Secondary UOM Ledger."),
-		},
+		
 	],
 	formatter: function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
