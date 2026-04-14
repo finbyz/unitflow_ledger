@@ -546,7 +546,7 @@ def get_conditions(filters):
         
     if filters.get("delay_days"):
         conditions += """
-            and DATEDIFF(CURRENT_DATE, soi.delivery_date) BETWEEN 1 AND %(delay_days)s
+            and DATEDIFF(CURRENT_DATE, soi.delivery_date) >= %(delay_days)s
         """
 
     return conditions
