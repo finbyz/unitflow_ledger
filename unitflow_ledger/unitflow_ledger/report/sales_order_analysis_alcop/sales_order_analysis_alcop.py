@@ -619,64 +619,128 @@ def get_conditions(filters):
 
 
 def get_data(conditions, filters):
-    data = frappe.db.sql(
-        f"""
-        SELECT
-            so.transaction_date as date,
-            soi.delivery_date as delivery_date,
-            so.name as sales_order,
-            so.status, so.customer, soi.item_code,
-            sii.parent as sales_invoice,
-            si.posting_date as invoice_date,
-            (
-                SELECT st.name
-                FROM `tabSales Team` st
-                WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
-                ORDER BY st.idx
-                LIMIT 1
-            ) as sales_team,
-            (
-                SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
-                FROM `tabSales Team` st
-                WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
-            ) as sales_person,
+    # If detailed view is enabled, get all invoice rows
+    # Otherwise, aggregate at SO item level
+    if filters.get("show_detailed_view"):
+        data = frappe.db.sql(
+            f"""
+            SELECT
+                so.transaction_date as date,
+                soi.delivery_date as delivery_date,
+                so.name as sales_order,
+                so.status, so.customer, soi.item_code,
+                sii.parent as sales_invoice,
+                si.posting_date as invoice_date,
+                (
+                    SELECT st.name
+                    FROM `tabSales Team` st
+                    WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+                    ORDER BY st.idx
+                    LIMIT 1
+                ) as sales_team,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
+                    FROM `tabSales Team` st
+                    WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+                ) as sales_person,
 
-            DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
-            IF(so.status in ('Completed','To Bill'), 0, DATEDIFF(CURRENT_DATE, soi.delivery_date)) as delay,
-            soi.uom,
-            soi.qty, soi.delivered_qty,
-            IFNULL(soi.secondary_qty, 0) as sec_qty,
-            soi.secondary_uom as sec_uom,
-            IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
-            (soi.qty - soi.delivered_qty) AS pending_qty,
-            IFNULL(sii.qty, 0) as billed_qty,
-            soi.base_amount as amount,
-            (soi.delivered_qty * soi.base_rate) as delivered_qty_amount,
-            (soi.billed_amt * IFNULL(so.conversion_rate, 1)) as billed_amount,
-            (soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
-            soi.warehouse as warehouse,
-            so.company, soi.name,
-            soi.description as description,
-            soi.price_list_rate as price_list_rate,
-            soi.discount_percentage as discount_percentage,
-            soi.discount_amount as discount_amount
-        FROM
-            `tabSales Order` so,
-            `tabSales Order Item` soi
-        LEFT JOIN `tabSales Invoice Item` sii
-            ON sii.so_detail = soi.name AND sii.docstatus = 1
-        LEFT JOIN `tabSales Invoice` si
-            ON si.name = sii.parent AND si.docstatus = 1
-        WHERE
-            soi.parent = so.name
-            AND so.status NOT IN ('Stopped', 'On Hold')
-            AND so.docstatus = 1
-            {conditions}
-        ORDER BY so.name ASC, soi.item_code ASC, si.posting_date ASC
-    """,
-        filters,
-        as_dict=1,
-    )
+                DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
+                IF(so.status in ('Completed','To Bill'), 0, DATEDIFF(CURRENT_DATE, soi.delivery_date)) as delay,
+                soi.uom,
+                soi.qty, soi.delivered_qty,
+                IFNULL(soi.secondary_qty, 0) as sec_qty,
+                soi.secondary_uom as sec_uom,
+                IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
+                (soi.qty - soi.delivered_qty) AS pending_qty,
+                IFNULL(sii.qty, 0) as billed_qty,
+                soi.base_amount as amount,
+                (soi.delivered_qty * soi.base_rate) as delivered_qty_amount,
+                (soi.billed_amt * IFNULL(so.conversion_rate, 1)) as billed_amount,
+                (soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
+                soi.warehouse as warehouse,
+                so.company, soi.name,
+                soi.description as description,
+                soi.price_list_rate as price_list_rate,
+                soi.discount_percentage as discount_percentage,
+                soi.discount_amount as discount_amount
+            FROM
+                `tabSales Order` so,
+                `tabSales Order Item` soi
+            LEFT JOIN `tabSales Invoice Item` sii
+                ON sii.so_detail = soi.name AND sii.docstatus = 1
+            LEFT JOIN `tabSales Invoice` si
+                ON si.name = sii.parent AND si.docstatus = 1
+            WHERE
+                soi.parent = so.name
+                AND so.status NOT IN ('Stopped', 'On Hold')
+                AND so.docstatus = 1
+                {conditions}
+            ORDER BY so.name ASC, soi.item_code ASC, si.posting_date ASC
+        """,
+            filters,
+            as_dict=1,
+        )
+    else:
+        # Original aggregated query
+        data = frappe.db.sql(
+            f"""
+            SELECT
+                so.transaction_date as date,
+                soi.delivery_date as delivery_date,
+                so.name as sales_order,
+                so.status, so.customer, soi.item_code,
+                MAX(sii.parent) as sales_invoice,
+                MAX(si.posting_date) as invoice_date,
+                (
+                    SELECT st.name
+                    FROM `tabSales Team` st
+                    WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+                    ORDER BY st.idx
+                    LIMIT 1
+                ) as sales_team,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
+                    FROM `tabSales Team` st
+                    WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+                ) as sales_person,
+
+                DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
+                IF(so.status in ('Completed','To Bill'), 0, DATEDIFF(CURRENT_DATE, soi.delivery_date)) as delay,
+                soi.uom,
+                soi.qty, soi.delivered_qty,
+                IFNULL(soi.secondary_qty, 0) as sec_qty,
+                soi.secondary_uom as sec_uom,
+                IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
+                (soi.qty - soi.delivered_qty) AS pending_qty,
+                IFNULL(SUM(sii.qty), 0) as billed_qty,
+                soi.base_amount as amount,
+                (soi.delivered_qty * soi.base_rate) as delivered_qty_amount,
+                (soi.billed_amt * IFNULL(so.conversion_rate, 1)) as billed_amount,
+                (soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
+                soi.warehouse as warehouse,
+                so.company, soi.name,
+                soi.description as description,
+                soi.price_list_rate as price_list_rate,
+                soi.discount_percentage as discount_percentage,
+                soi.discount_amount as discount_amount
+            FROM
+                `tabSales Order` so,
+                `tabSales Order Item` soi
+            LEFT JOIN `tabSales Invoice Item` sii
+                ON sii.so_detail = soi.name AND sii.docstatus = 1
+            LEFT JOIN `tabSales Invoice` si
+                ON si.name = sii.parent AND si.docstatus = 1
+            WHERE
+                soi.parent = so.name
+                AND so.status NOT IN ('Stopped', 'On Hold')
+                AND so.docstatus = 1
+                {conditions}
+            GROUP BY soi.name
+            ORDER BY so.name ASC, soi.item_code ASC
+        """,
+            filters,
+            as_dict=1,
+        )
 
     return data
 
@@ -730,11 +794,17 @@ def prepare_data(data, so_elapsed_time, filters):
     if filters.get("group_by_so"):
         sales_order_map = {}
 
+    # Track unique SO items for chart calculation
+    so_item_totals = {}
+
     for row in data:
-        # sum data for chart — use billed_amount/pending_amount from SO item level to avoid double counting
-        # Only count once per unique soi.name
-        completed += row["billed_amount"]
-        pending += row["pending_amount"]
+        # Calculate totals per SO item (not per invoice line) for chart
+        so_item_key = row.get("name")  # soi.name is unique identifier
+        if so_item_key not in so_item_totals:
+            so_item_totals[so_item_key] = {
+                "billed_amount": row["billed_amount"],
+                "pending_amount": row["pending_amount"]
+            }
 
         # prepare data for report view
         row["qty_to_bill"] = flt(row["qty"]) - flt(row["billed_qty"])
@@ -800,6 +870,11 @@ def prepare_data(data, so_elapsed_time, filters):
                 for field in fields:
                     so_row[field] = flt(row[field]) + flt(so_row[field])
 
+    # Calculate chart totals from unique SO items
+    for totals in so_item_totals.values():
+        completed += totals["billed_amount"]
+        pending += totals["pending_amount"]
+
     chart_data = prepare_chart_data(pending, completed)
 
     if filters.get("group_by_so"):
@@ -808,7 +883,98 @@ def prepare_data(data, so_elapsed_time, filters):
             data.append(sales_order_map[so])
         return data, chart_data
 
+    # Handle detailed view with parent-child tree structure
+    if filters.get("show_detailed_view"):
+        data = prepare_tree_data(data)
+        return data, chart_data
+
     return data, chart_data
+
+
+def prepare_tree_data(data):
+    """
+    Prepare parent-child tree structure:
+    - Parent: Sales Order with aggregated data
+    - Children: Individual Sales Invoices with item details (qty only, no amounts)
+    """
+    from collections import defaultdict
+    
+    # Group data by Sales Order and Item
+    so_item_map = defaultdict(lambda: {
+        "parent": None,
+        "children": []
+    })
+    
+    for row in data:
+        key = (row["sales_order"], row["item_code"])
+        
+        if so_item_map[key]["parent"] is None:
+            # Create parent row (SO + Item summary)
+            parent = copy.deepcopy(row)
+            parent["indent"] = 0
+            parent["sales_invoice"] = None  # Clear invoice for parent
+            parent["invoice_date"] = None
+            so_item_map[key]["parent"] = parent
+        else:
+            # Update parent with aggregated values
+            parent = so_item_map[key]["parent"]
+        
+        # Create child row for each invoice (if invoice exists)
+        if row.get("sales_invoice"):
+            child = {
+                "indent": 1,
+                "sales_order": row["sales_order"],
+                "sales_invoice": row["sales_invoice"],
+                "invoice_date": row["invoice_date"],
+                "item_code": row["item_code"],
+                "description": row["description"],
+                "customer": row["customer"],
+                "status": row["status"],
+                "date": row["date"],
+                "delivery_date": row["delivery_date"],
+                "sales_person": row["sales_person"],
+                "uom": row["uom"],
+                "qty": row["billed_qty"],  # Show billed qty in child
+                "sec_uom": row["sec_uom"],
+                "sec_qty": row["sec_billed_qty"],  # Show sec billed qty
+                "warehouse": row["warehouse"],
+                "company": row["company"],
+                # Clear amount fields for children
+                "amount": None,
+                "billed_amount": None,
+                "pending_amount": None,
+                "delivered_qty_amount": None,
+                "price_list_rate": None,
+                "discount_percentage": None,
+                "discount_amount": None,
+                "delivered_qty": None,
+                "sec_delivered_qty": None,
+                "pending_qty": None,
+                "sec_qty_to_deliver": None,
+                "billed_qty": None,
+                "sec_billed_qty": None,
+                "qty_to_bill": None,
+                "sec_qty_to_bill": None,
+                "delay": None,
+                "time_taken_to_deliver": None,
+            }
+            so_item_map[key]["children"].append(child)
+    
+    # Build final tree structure
+    tree_data = []
+    for key in sorted(so_item_map.keys()):
+        item_data = so_item_map[key]
+        parent = item_data["parent"]
+        children = item_data["children"]
+        
+        # Add parent
+        tree_data.append(parent)
+        
+        # Add children
+        for child in children:
+            tree_data.append(child)
+    
+    return tree_data
 
 
 def prepare_chart_data(pending, completed):

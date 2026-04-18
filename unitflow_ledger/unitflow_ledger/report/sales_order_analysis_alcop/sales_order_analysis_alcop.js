@@ -5,7 +5,7 @@ let last_sales_order_for_color = null;
 let sales_order_color_band = 0;
 
 frappe.query_reports["Sales Order Analysis Alcop"] = {
-filters: [
+	filters: [
 		{
 			fieldname: "company",
 			label: __("Company"),
@@ -97,14 +97,18 @@ filters: [
                 return frappe.db.get_link_options("Customer", txt);
             }
         },
-		
+		{
+			fieldname: "show_detailed_view",
+			label: __("Show Detailed View"),
+			fieldtype: "Check",
+			default: 1,
+		},
 		{
 			fieldname: "group_by_so",
 			label: __("Group by Sales Order"),
 			fieldtype: "Check",
 			default: 0,
 		},
-
 		{
             fieldname: "filter_by_delay",
             label: "Filter by Delay",
@@ -117,6 +121,17 @@ filters: [
             depends_on: "eval:doc.filter_by_delay == 1"
         }
 	],
+
+	tree: false,  // Will be enabled dynamically
+	initial_depth: 1,
+	
+	onload: function(report) {
+		// Monitor the show_detailed_view filter
+		report.page.on('show', function() {
+			const show_detailed = frappe.query_report.get_filter_value('show_detailed_view');
+			frappe.query_reports["Sales Order Analysis Alcop"].tree = show_detailed ? true : false;
+		});
+	},
 
 	after_refresh: function() {
 		last_sales_order_for_color = null;
