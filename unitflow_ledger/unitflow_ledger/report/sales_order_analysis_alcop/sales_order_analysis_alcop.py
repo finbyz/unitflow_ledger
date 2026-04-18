@@ -40,7 +40,11 @@
 
 
 # def get_conditions(filters):
-#     conditions = ""
+#     conditions = ""   
+    
+#     if filters.get("customer"):
+#         conditions += " and so.customer in %(customer)s"
+        
 #     if filters.get("from_date") and filters.get("to_date"):
 #         conditions += " and so.transaction_date between %(from_date)s and %(to_date)s"
 
@@ -55,6 +59,11 @@
 
 #     if filters.get("warehouse"):
 #         conditions += " and soi.warehouse = %(warehouse)s"
+        
+#     if filters.get("delay_days"):
+#         conditions += """
+#             and DATEDIFF(CURRENT_DATE, soi.delivery_date) >= %(delay_days)s
+#         """
 
 #     return conditions
 
@@ -68,6 +77,7 @@
 # 			so.name as sales_order,
 # 			so.status, so.customer, soi.item_code,
 # 			MAX(sii.parent) as sales_invoice,
+#             MAX(si.posting_date) as invoice_date,
 # 			(
 # 				SELECT st.name
 # 				FROM `tabSales Team` st
@@ -96,19 +106,24 @@
 # 			(soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
 # 			soi.warehouse as warehouse,
 # 			so.company, soi.name,
-# 			soi.description as description
+# 			soi.description as description,
+# 			soi.price_list_rate as price_list_rate,
+# 			soi.discount_percentage as discount_percentage,
+# 			soi.discount_amount as discount_amount
 # 		FROM
 # 			`tabSales Order` so,
 # 			`tabSales Order Item` soi
 # 		LEFT JOIN `tabSales Invoice Item` sii
 # 			ON sii.so_detail = soi.name and sii.docstatus = 1
+#         LEFT JOIN `tabSales Invoice` si
+#             ON si.name = sii.parent AND si.docstatus = 1
 # 		WHERE
 # 			soi.parent = so.name
 # 			and so.status not in ('Stopped', 'On Hold')
 # 			and so.docstatus = 1
 # 			{conditions}
 # 		GROUP BY soi.name
-# 		ORDER BY so.transaction_date ASC, soi.item_code ASC
+# 		ORDER BY so.name ASC, soi.item_code ASC
 # 	""",
 #         filters,
 #         as_dict=1,
@@ -276,6 +291,13 @@
 #             "options": "Sales Invoice",
 #             "width": 160,
 #         },
+        
+#         {
+#             "label": _("Invoice Date"),
+#             "fieldname": "invoice_date",
+#             "fieldtype": "Date",
+#             "width": 120,
+#         },
 #         {
 #             "label": _("Status"),
 #             "fieldname": "status",
@@ -287,7 +309,7 @@
 #             "fieldname": "customer",
 #             "fieldtype": "Link",
 #             "options": "Customer",
-#             "width": 130,
+#             "width": 200,
 #         },
 #     ]
 
@@ -298,7 +320,7 @@
 #                 "fieldname": "item_code",
 #                 "fieldtype": "Link",
 #                 "options": "Item",
-#                 "width": 100,
+#                 "width": 280,
 #             }
 #         )
 #         columns.append(
@@ -306,7 +328,7 @@
 #                 "label": _("Description"),
 #                 "fieldname": "description",
 #                 "fieldtype": "Small Text",
-#                 "width": 100,
+#                 "width": 170,
 #             }
 #         )
 
@@ -410,6 +432,28 @@
 #                 "convertible": "qty",
 #             },
 #             {
+#                 "label": _("Price List Rate (INR)"),
+#                 "fieldname": "price_list_rate",
+#                 "fieldtype": "Currency",
+#                 "width": 150,
+#                 "options": "Company:company:default_currency",
+#                 "convertible": "rate",
+#             },
+#             {
+#                 "label": _("Discount (%) on Price List Rate with Margin"),
+#                 "fieldname": "discount_percentage",
+#                 "fieldtype": "Percent",
+#                 "width": 220,
+#             },
+#             {
+#                 "label": _("Discount Amount"),
+#                 "fieldname": "discount_amount",
+#                 "fieldtype": "Currency",
+#                 "width": 150,
+#                 "options": "Company:company:default_currency",
+#                 "convertible": "rate",
+#             },
+#             {
 #                 "label": _("Amount"),
 #                 "fieldname": "amount",
 #                 "fieldtype": "Currency",
@@ -468,7 +512,7 @@
 #                 "fieldname": "warehouse",
 #                 "fieldtype": "Link",
 #                 "options": "Warehouse",
-#                 "width": 100,
+#                 "width": 130,
 #             }
 #         )
 #     columns.append(
@@ -477,11 +521,33 @@
 #             "fieldname": "company",
 #             "fieldtype": "Link",
 #             "options": "Company",
-#             "width": 100,
+#             "width": 200,
 #         }
 #     )
 
 #     return columns
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
@@ -524,11 +590,11 @@ def validate_filters(filters):
 
 
 def get_conditions(filters):
-    conditions = ""   
-    
+    conditions = ""
+
     if filters.get("customer"):
         conditions += " and so.customer in %(customer)s"
-        
+
     if filters.get("from_date") and filters.get("to_date"):
         conditions += " and so.transaction_date between %(from_date)s and %(to_date)s"
 
@@ -543,7 +609,7 @@ def get_conditions(filters):
 
     if filters.get("warehouse"):
         conditions += " and soi.warehouse = %(warehouse)s"
-        
+
     if filters.get("delay_days"):
         conditions += """
             and DATEDIFF(CURRENT_DATE, soi.delivery_date) >= %(delay_days)s
@@ -555,60 +621,59 @@ def get_conditions(filters):
 def get_data(conditions, filters):
     data = frappe.db.sql(
         f"""
-		SELECT
-			so.transaction_date as date,
-			soi.delivery_date as delivery_date,
-			so.name as sales_order,
-			so.status, so.customer, soi.item_code,
-			MAX(sii.parent) as sales_invoice,
-            MAX(si.posting_date) as invoice_date,
-			(
-				SELECT st.name
-				FROM `tabSales Team` st
-				WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
-				ORDER BY st.idx
-				LIMIT 1
-			) as sales_team,
-			(
-				SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
-				FROM `tabSales Team` st
-				WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
-			) as sales_person,
+        SELECT
+            so.transaction_date as date,
+            soi.delivery_date as delivery_date,
+            so.name as sales_order,
+            so.status, so.customer, soi.item_code,
+            sii.parent as sales_invoice,
+            si.posting_date as invoice_date,
+            (
+                SELECT st.name
+                FROM `tabSales Team` st
+                WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+                ORDER BY st.idx
+                LIMIT 1
+            ) as sales_team,
+            (
+                SELECT GROUP_CONCAT(DISTINCT st.sales_person ORDER BY st.idx SEPARATOR ', ')
+                FROM `tabSales Team` st
+                WHERE st.parent = so.name AND st.parenttype = 'Sales Order'
+            ) as sales_person,
 
-			DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
-			IF(so.status in ('Completed','To Bill'), 0, (SELECT delay_days)) as delay,
-			soi.uom,
-			soi.qty, soi.delivered_qty,
-			IFNULL(soi.secondary_qty, 0) as sec_qty,
-			soi.secondary_uom as sec_uom,
-			IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
-			(soi.qty - soi.delivered_qty) AS pending_qty,
-			IFNULL(SUM(sii.qty), 0) as billed_qty,
-			soi.base_amount as amount,
-			(soi.delivered_qty * soi.base_rate) as delivered_qty_amount,
-			(soi.billed_amt * IFNULL(so.conversion_rate, 1)) as billed_amount,
-			(soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
-			soi.warehouse as warehouse,
-			so.company, soi.name,
-			soi.description as description,
-			soi.price_list_rate as price_list_rate,
-			soi.discount_percentage as discount_percentage,
-			soi.discount_amount as discount_amount
-		FROM
-			`tabSales Order` so,
-			`tabSales Order Item` soi
-		LEFT JOIN `tabSales Invoice Item` sii
-			ON sii.so_detail = soi.name and sii.docstatus = 1
+            DATEDIFF(CURRENT_DATE, soi.delivery_date) as delay_days,
+            IF(so.status in ('Completed','To Bill'), 0, DATEDIFF(CURRENT_DATE, soi.delivery_date)) as delay,
+            soi.uom,
+            soi.qty, soi.delivered_qty,
+            IFNULL(soi.secondary_qty, 0) as sec_qty,
+            soi.secondary_uom as sec_uom,
+            IFNULL(soi.secondary_conversion_factor, 0) as sec_conversion_factor,
+            (soi.qty - soi.delivered_qty) AS pending_qty,
+            IFNULL(sii.qty, 0) as billed_qty,
+            soi.base_amount as amount,
+            (soi.delivered_qty * soi.base_rate) as delivered_qty_amount,
+            (soi.billed_amt * IFNULL(so.conversion_rate, 1)) as billed_amount,
+            (soi.base_amount - (soi.billed_amt * IFNULL(so.conversion_rate, 1))) as pending_amount,
+            soi.warehouse as warehouse,
+            so.company, soi.name,
+            soi.description as description,
+            soi.price_list_rate as price_list_rate,
+            soi.discount_percentage as discount_percentage,
+            soi.discount_amount as discount_amount
+        FROM
+            `tabSales Order` so,
+            `tabSales Order Item` soi
+        LEFT JOIN `tabSales Invoice Item` sii
+            ON sii.so_detail = soi.name AND sii.docstatus = 1
         LEFT JOIN `tabSales Invoice` si
             ON si.name = sii.parent AND si.docstatus = 1
-		WHERE
-			soi.parent = so.name
-			and so.status not in ('Stopped', 'On Hold')
-			and so.docstatus = 1
-			{conditions}
-		GROUP BY soi.name
-		ORDER BY so.name ASC, soi.item_code ASC
-	""",
+        WHERE
+            soi.parent = so.name
+            AND so.status NOT IN ('Stopped', 'On Hold')
+            AND so.docstatus = 1
+            {conditions}
+        ORDER BY so.name ASC, soi.item_code ASC, si.posting_date ASC
+    """,
         filters,
         as_dict=1,
     )
@@ -666,7 +731,8 @@ def prepare_data(data, so_elapsed_time, filters):
         sales_order_map = {}
 
     for row in data:
-        # sum data for chart
+        # sum data for chart — use billed_amount/pending_amount from SO item level to avoid double counting
+        # Only count once per unique soi.name
         completed += row["billed_amount"]
         pending += row["pending_amount"]
 
@@ -702,11 +768,9 @@ def prepare_data(data, so_elapsed_time, filters):
             so_name = row["sales_order"]
 
             if so_name not in sales_order_map:
-                # create an entry
                 row_copy = copy.deepcopy(row)
                 sales_order_map[so_name] = row_copy
             else:
-                # update existing entry
                 so_row = sales_order_map[so_name]
                 so_row["required_date"] = max(
                     getdate(so_row["delivery_date"]), getdate(row["delivery_date"])
@@ -717,7 +781,6 @@ def prepare_data(data, so_elapsed_time, filters):
                     else so_row["delay"]
                 )
 
-                # sum numeric columns
                 fields = [
                     "qty",
                     "sec_qty",
@@ -775,7 +838,6 @@ def get_columns(filters):
             "options": "Sales Invoice",
             "width": 160,
         },
-        
         {
             "label": _("Invoice Date"),
             "fieldname": "invoice_date",
@@ -818,13 +880,6 @@ def get_columns(filters):
 
     columns.extend(
         [
-            # {
-            # 	"label": _("Sales Team"),
-            # 	"fieldname": "sales_team",
-            # 	"fieldtype": "Link",
-            # 	"options": "Sales Team",
-            # 	"width": 150,
-            # },
             {
                 "label": _("Sales Person"),
                 "fieldname": "sales_person",

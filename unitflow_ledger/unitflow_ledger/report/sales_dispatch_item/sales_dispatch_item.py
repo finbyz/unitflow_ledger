@@ -20,9 +20,12 @@ def get_columns(filters=None):
     cols = [
         {"label": _("SO No"), "fieldname": "sales_order", "fieldtype": "Link", "options": "Sales Order", "width": 140},
         {"label": _("SO Date"), "fieldname": "transaction_date", "fieldtype": "Date", "width": 100},
+        {"label": _("PO No"), "fieldname": "po_no", "fieldtype": "Data", "width": 100},
+        {"label": _("PO Date"), "fieldname": "po_date", "fieldtype": "Date", "width": 100},
         {"label": _("Party"), "fieldname": "customer", "fieldtype": "Link", "options": "Customer", "width": 180},
         {"label": _("Code"), "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 160},
-        {"label": _("Description"), "fieldname": "description", "fieldtype": "Data", "width": 220},
+        {"label": _("Description"), "fieldname": "item_name", "fieldtype": "Small Text", "width": 100},
+        {"label": _("Narration"), "fieldname": "description", "fieldtype": "Data", "width": 220},      
         {"label": _("Qty 1"), "fieldname": "stock_qty", "fieldtype": "Float", "width": 110},
         {"label": _("Unit 1"), "fieldname": "stock_uom", "fieldtype": "Link", "options": "UOM", "width": 80},
         {"label": _("Qty 2"), "fieldname": "secondary_qty", "fieldtype": "Float", "width": 110},
@@ -44,11 +47,14 @@ def get_columns(filters=None):
             {"label": _("Executed Qty 2"), "fieldname": "executed_qty2", "fieldtype": "Float", "width": 120},
             {"label": _("Pending Qty 1"), "fieldname": "pending_qty1", "fieldtype": "Float", "width": 120},
             {"label": _("Pending Qty 2"), "fieldname": "pending_qty2", "fieldtype": "Float", "width": 120},
+            {"label": _("Pending Value"), "fieldname": "pending_amt", "fieldtype": "Currency", "width": 120},
             {"label": _("Sch. Date"), "fieldname": "schedule_date", "fieldtype": "Date", "width": 100},
             {"label": _("Entered By"), "fieldname": "entered_by", "fieldtype": "Data", "width": 120},
             {"label": _("Inv. No"), "fieldname": "invoice_no", "fieldtype": "Link", "options": "Sales Invoice", "width": 140},
             {"label": _("Inv. Date"), "fieldname": "invoice_date", "fieldtype": "Date", "width": 100},
             {"label": _("Inv. Qty"), "fieldname": "invoice_qty", "fieldtype": "Float", "width": 110},
+            {"label": _("Inv. Entered By"), "fieldname": "owner", "fieldtype": "Data", "width": 110},
+
         ])
 
     return cols
@@ -71,6 +77,8 @@ def get_data(filters):
             so.name AS sales_order,
             so.transaction_date,
             so.customer,
+            so.po_no,
+            so.po_date,
             soi.name AS so_item_name,
             soi.item_code,
             soi.item_name,
@@ -81,6 +89,8 @@ def get_data(filters):
             soi.secondary_uom,
             soi.secondary_conversion_factor,
             soi.delivered_qty AS so_delivered_stock_qty,
+            (soi.stock_qty - IFNULL(soi.delivered_qty, 0)) AS pending_qty,
+            ((soi.stock_qty - IFNULL(soi.delivered_qty, 0)) * soi.rate) AS pending_amt,
             soi.rate,
             soi.discount_percentage,
             soi.discount_amount,
@@ -126,6 +136,7 @@ def get_data(filters):
             sii.item_code,
             sii.stock_qty,
             si.name AS invoice_no,
+            si.owner AS owner,
             si.posting_date AS invoice_date
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
@@ -170,7 +181,8 @@ def get_data(filters):
             invoice_map[target] = {
                 "qty": 0,
                 "invoice_no": row.invoice_no,
-                "invoice_date": row.invoice_date
+                "invoice_date": row.invoice_date,
+                "owner": row.owner
             }
 
         invoice_map[target]["qty"] += flt(row.stock_qty)
@@ -197,6 +209,8 @@ def get_data(filters):
                 "sales_order": sales_order,
                 "transaction_date": item.transaction_date,
                 "customer": item.customer,
+                "po_no": item.po_no,          # ✅ ADD THIS
+                "po_date": item.po_date,
                 "item_code": "",
                 "description": f"Sales Order: {sales_order}",
                 "stock_qty": 0,
@@ -228,6 +242,7 @@ def get_data(filters):
             "transaction_date": item.transaction_date,
             "customer": item.customer,
             "item_code": item.item_code,
+            "item_name": item.item_name,
             "description": item.description,
             "stock_qty": flt(item.stock_qty),
             "stock_uom": item.stock_uom,
@@ -237,6 +252,9 @@ def get_data(filters):
             "delivered_secondary_qty": del2,
             "pending_stock_qty": flt(item.stock_qty) - del1,
             "pending_secondary_qty": ord2 - del2,
+            "po_no": item.po_no,
+            "po_date": item.po_date,
+            "pending_amt": item.pending_amt,
             # detailed
             "rate": item.rate,
             "discount_percentage": item.discount_percentage,
@@ -252,6 +270,7 @@ def get_data(filters):
             "invoice_no": inv.get("invoice_no"),
             "invoice_date": inv.get("invoice_date"),
             "invoice_qty": inv_qty,
+            "owner": inv.get("owner"),   # ✅ ADD
         }
         
         sales_order_map[sales_order]["children"].append(child_item)
